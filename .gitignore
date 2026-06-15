@@ -17,3 +17,5 @@ input/**/
 
 output/**/
 !output/.gitkeep
+
+catboost_info/
