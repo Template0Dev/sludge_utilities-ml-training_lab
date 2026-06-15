@@ -19,3 +19,5 @@ output/**/
 !output/.gitkeep
 
 catboost_info/
+
+.DS_Store
