@@ -20,6 +20,8 @@ data/raw/*
 # Input directory
 input/gb/*
 !input/gb/.gitkeep
+input/resnet/*
+!input/resnet/.gitkeep
 
 # Output directories (ignore content, preserve folder via .gitkeep)
 output/**/metrics/*
