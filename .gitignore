@@ -9,15 +9,31 @@ wheels/
 # Virtual environments
 .venv
 
-data/**/
-!data/.gitkeep
+# Data directories (ignore content, preserve folder via .gitkeep)
+data/images/*
+!data/images/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/raw/*
+!data/raw/.gitkeep
 
-input/**/
+# Input directory
+input/*
 !input/.gitkeep
 
-output/**/
-!output/.gitkeep
+# Output directories (ignore content, preserve folder via .gitkeep)
+output/metrics/*
+!output/metrics/.gitkeep
+output/models/*
+!output/models/.gitkeep
 
 catboost_info/
 
+# OS-specific files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
