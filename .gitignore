@@ -12,20 +12,20 @@ wheels/
 # Data directories (ignore content, preserve folder via .gitkeep)
 data/images/*
 !data/images/.gitkeep
-data/interim/*
-!data/interim/.gitkeep
+data/interim/gb/*
+!data/interim/gb/.gitkeep
 data/raw/*
 !data/raw/.gitkeep
 
 # Input directory
-input/*
-!input/.gitkeep
+input/gb/*
+!input/gb/.gitkeep
 
 # Output directories (ignore content, preserve folder via .gitkeep)
-output/metrics/*
-!output/metrics/.gitkeep
-output/models/*
-!output/models/.gitkeep
+output/**/metrics/*
+!output/**/metrics/.gitkeep
+output/**/models/*
+!output/**/models/.gitkeep
 
 catboost_info/
 
