@@ -24,8 +24,8 @@ input/resnet/*
 !input/resnet/.gitkeep
 
 # Output directories (ignore content, preserve folder via .gitkeep)
-output/**/metrics/*
-!output/**/metrics/.gitkeep
+output/**/predictions/*
+!output/**/predictions/.gitkeep
 output/**/models/*
 !output/**/models/.gitkeep
 
