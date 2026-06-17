@@ -28,6 +28,8 @@ output/**/predictions/*
 !output/**/predictions/.gitkeep
 output/**/models/*
 !output/**/models/.gitkeep
+output/**/logs/*
+!output/**/logs/.gitkeep
 
 catboost_info/
 
