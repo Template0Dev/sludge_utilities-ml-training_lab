@@ -34,6 +34,8 @@ output/**/logs/*
 !output/**/logs/.gitkeep
 output/**/meta/*
 !output/**/meta/.gitkeep
+output/**/optuna/*
+!output/**/optuna/.gitkeep
 
 catboost_info/
 

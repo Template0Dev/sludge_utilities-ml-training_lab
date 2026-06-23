@@ -11,6 +11,7 @@ dependencies = [
     "ipywidgets>=8.1.8",
     "numpy>=2.4.6",
     "opencv-python>=4.13.0.92",
+    "optuna>=4.6.0",
     "pandas>=2.3.1",
     "pillow>=12.2.0",
     "pyarrow>=24.0.0",
