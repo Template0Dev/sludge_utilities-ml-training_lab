@@ -32,6 +32,8 @@ output/**/models/*
 !output/**/models/.gitkeep
 output/**/logs/*
 !output/**/logs/.gitkeep
+output/**/meta/*
+!output/**/meta/.gitkeep
 
 catboost_info/
 
