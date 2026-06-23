@@ -12,10 +12,12 @@ wheels/
 # Data directories (ignore content, preserve folder via .gitkeep)
 data/images/*
 !data/images/.gitkeep
-data/interim/gb/*
-!data/interim/gb/.gitkeep
-data/raw/*
-!data/raw/.gitkeep
+data/meta/processed/gb/*
+!data/meta/processed/gb/.gitkeep
+data/meta/interim/gb/*
+!data/meta/interim/gb/.gitkeep
+data/meta/raw/*
+!data/meta/raw/.gitkeep
 
 # Input directory
 input/gb/*
