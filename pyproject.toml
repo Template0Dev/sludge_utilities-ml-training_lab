@@ -23,4 +23,5 @@ dependencies = [
     "torchaudio>=2.11.0",
     "torchvision>=0.27.0",
     "transformers>=5.11.0",
+    "uuid6>=2025.0.1",
 ]
