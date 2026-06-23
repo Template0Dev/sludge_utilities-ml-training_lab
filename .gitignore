@@ -14,8 +14,8 @@ data/images/*
 !data/images/.gitkeep
 data/meta/processed/gb/*
 !data/meta/processed/gb/.gitkeep
-data/meta/interim/gb/*
-!data/meta/interim/gb/.gitkeep
+data/meta/interim/*
+!data/meta/interim/.gitkeep
 data/meta/raw/*
 !data/meta/raw/.gitkeep
 
