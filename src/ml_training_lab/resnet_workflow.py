@@ -4,11 +4,22 @@ import datetime as dt
 import gc
 import json
 import random
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# PyTorch 2.12 warns from Lightning's internal compatibility helper. Suppress
+# only this dependency warning until Lightning removes its legacy LeafSpec use.
+warnings.filterwarnings(
+    "ignore",
+    message=r"`isinstance\(treespec, LeafSpec\)` is deprecated,.*",
+    category=FutureWarning,
+    module=r"pytorch_lightning\.utilities\._pytree",
+)
+
 import cv2
+import httpx
 import numpy as np
 import optuna
 import pandas as pd
@@ -16,6 +27,8 @@ import pytorch_lightning as pl
 import timm
 import torch
 import torch.nn as nn
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import LocalEntryNotFoundError
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from torch.utils.data import DataLoader, Dataset
 from uuid6 import uuid6
@@ -56,6 +69,9 @@ FIXED_PARAMETERS = {
     "input_size": 512, "max_epochs": 15, "early_stop_patience": 6,
     "lr_factor": 0.5, "lr_patience": 3, "random_seed": 42,
 }
+RESNET_MODEL_NAME = "resnet50d"
+RESNET_HF_REPOSITORY = "timm/resnet50d.ra2_in1k"
+RESNET_HF_WEIGHTS = "model.safetensors"
 
 
 @dataclass(frozen=True)
@@ -66,7 +82,7 @@ class ResNetTuningConfig:
     smoke_mode: bool = False
     tuning_wells: tuple[int, ...] = (2, 3, 4)
     holdout_well: int = 1
-    num_workers: int = 0
+    num_workers: int = 13
 
     @property
     def dataset_path(self) -> Path:
@@ -87,7 +103,8 @@ class ResNetFinalConfig:
     optuna_summary_path: Path
     holdout_well: int = 1
     training_wells: tuple[int, ...] = (2, 3, 4)
-    num_workers: int = 0
+    num_workers: int = 13
+    save_predictions: bool = True
 
 
 def seed_everything() -> None:
@@ -121,13 +138,36 @@ class SludgeImageDataset(Dataset):
         return torch.from_numpy(image), torch.from_numpy(targets)
 
 
+def create_resnet_backbone() -> nn.Module:
+    try:
+        return timm.create_model(RESNET_MODEL_NAME, pretrained=True, num_classes=0)
+    except httpx.HTTPError as network_error:
+        try:
+            cached_weights = hf_hub_download(
+                repo_id=RESNET_HF_REPOSITORY,
+                filename=RESNET_HF_WEIGHTS,
+                local_files_only=True,
+            )
+        except LocalEntryNotFoundError:
+            raise RuntimeError(
+                f"Could not download {RESNET_HF_REPOSITORY} and no locally cached "
+                f"{RESNET_HF_WEIGHTS} file is available."
+            ) from network_error
+        return timm.create_model(
+            RESNET_MODEL_NAME,
+            pretrained=True,
+            num_classes=0,
+            pretrained_cfg_overlay={"file": cached_weights},
+        )
+
+
 class SludgeResNet(pl.LightningModule):
     def __init__(self, params: dict[str, Any], *, scheduler_enabled: bool = True):
         super().__init__()
         self.save_hyperparameters({"params": params, "scheduler_enabled": scheduler_enabled})
         self.params = params
         self.scheduler_enabled = scheduler_enabled
-        self.backbone = timm.create_model("resnet50d", pretrained=True, num_classes=0)
+        self.backbone = create_resnet_backbone()
         self.head = nn.Sequential(
             nn.Linear(self.backbone.num_features, params["head_hidden_size"]),
             nn.LayerNorm(params["head_hidden_size"]), nn.ReLU(),
@@ -151,6 +191,10 @@ class SludgeResNet(pl.LightningModule):
         self.log("val_mae", torch.mean(torch.abs(predictions - targets)), on_epoch=True, prog_bar=True)
         for index, target in enumerate(TARGET_COLUMNS):
             self.log(f"val_mae_{target}", torch.mean(torch.abs(predictions[:, index] - targets[:, index])), on_epoch=True)
+
+    def predict_step(self, batch: tuple[torch.Tensor, torch.Tensor], _batch_index: int) -> torch.Tensor:
+        images, _targets = batch
+        return self(images).detach().cpu()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -201,7 +245,8 @@ def accelerator() -> str:
 def loader(df: pd.DataFrame, config: ResNetTuningConfig | ResNetFinalConfig, batch_size: int, shuffle: bool) -> DataLoader:
     return DataLoader(
         SludgeImageDataset(df, config.project_root / "data/images"), batch_size=batch_size,
-        shuffle=shuffle, num_workers=config.num_workers, drop_last=shuffle and len(df) >= batch_size,
+        shuffle=shuffle, num_workers=config.num_workers, persistent_workers=config.num_workers > 0,
+        drop_last=shuffle and len(df) >= batch_size,
     )
 
 
@@ -311,12 +356,18 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     trainer = pl.Trainer(max_epochs=final_epochs, accelerator=accelerator(), devices=1, logger=False, enable_checkpointing=False)
     started_at = dt.datetime.now().isoformat(timespec="seconds")
     trainer.fit(model, train_dataloaders=loader(train_df, config, params["batch_size"], True))
-    metrics = trainer.validate(model, dataloaders=loader(holdout_df, config, params["batch_size"], False), verbose=False)[0]
+    holdout_loader = loader(holdout_df, config, params["batch_size"], False)
+    metrics = trainer.validate(model, dataloaders=holdout_loader, verbose=False)[0]
+    predictions = None
+    if config.save_predictions:
+        prediction_batches = trainer.predict(model, dataloaders=holdout_loader)
+        predictions = torch.cat(prediction_batches).numpy()
     training_id = str(uuid6())
     model_dir = config.project_root / "output/resnet/models"
     meta_dir = config.project_root / "output/resnet/meta"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    meta_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dir = config.project_root / "output/resnet/predictions"
+    for directory in (model_dir, meta_dir, predictions_dir):
+        directory.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / f"[{training_id}] ResNet.ckpt"
     trainer.save_checkpoint(model_path)
     metadata = {
@@ -329,4 +380,9 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     }
     meta_path = meta_dir / f"[{training_id}] ResNet.txt"
     meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if predictions is not None:
+        prediction_frame = holdout_df[list(TARGET_COLUMNS)].reset_index(drop=True).add_suffix("_true")
+        for index, target in enumerate(TARGET_COLUMNS):
+            prediction_frame[f"{target}_pred"] = predictions[:, index]
+        prediction_frame.to_csv(predictions_dir / f"[{training_id}] ResNet (Result).csv", index=False)
     return model_path, metadata

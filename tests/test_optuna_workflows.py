@@ -4,7 +4,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import httpx
 import numpy as np
 import optuna
 import pandas as pd
@@ -13,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ml_training_lab.gb_workflow import fit_fold_features
 from ml_training_lab.optuna_support import assert_tuning_protocol, macro_mae, originals_for_well, prepare_study
+from ml_training_lab.resnet_workflow import ResNetFinalConfig, ResNetTuningConfig, accelerator, create_resnet_backbone
 
 
 class ProtocolTests(unittest.TestCase):
@@ -60,6 +63,38 @@ class PCAIsolationTests(unittest.TestCase):
         })
         _, _, pca = fit_fold_features(train, validation, components=1)
         np.testing.assert_allclose(pca.mean_, np.array([1 / 3, 1 / 3]))
+
+
+class ResNetBackboneTests(unittest.TestCase):
+    @patch("ml_training_lab.resnet_workflow.hf_hub_download")
+    @patch("ml_training_lab.resnet_workflow.timm.create_model")
+    def test_network_failure_loads_cached_weights(self, create_model, hub_download) -> None:
+        backbone = object()
+        create_model.side_effect = [httpx.ProxyError("proxy unavailable"), backbone]
+        hub_download.return_value = "/cache/model.safetensors"
+
+        self.assertIs(create_resnet_backbone(), backbone)
+        hub_download.assert_called_once_with(
+            repo_id="timm/resnet50d.ra2_in1k",
+            filename="model.safetensors",
+            local_files_only=True,
+        )
+        self.assertEqual(
+            create_model.call_args_list[1].kwargs["pretrained_cfg_overlay"],
+            {"file": "/cache/model.safetensors"},
+        )
+
+    def test_configs_default_to_thirteen_data_workers(self) -> None:
+        tuning_config = ResNetTuningConfig(project_root=Path("."))
+        final_config = ResNetFinalConfig(project_root=Path("."), optuna_summary_path=Path("summary.json"))
+
+        self.assertEqual(tuning_config.num_workers, 13)
+        self.assertEqual(final_config.num_workers, 13)
+        self.assertTrue(final_config.save_predictions)
+
+    @patch("ml_training_lab.resnet_workflow.torch.backends.mps.is_available", return_value=True)
+    def test_mps_is_selected_when_available(self, _is_available) -> None:
+        self.assertEqual(accelerator(), "mps")
 
 
 if __name__ == "__main__":
