@@ -13,9 +13,15 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ml_training_lab.gb_workflow import fit_fold_features
+from ml_training_lab.gb_workflow import fit_fold_features, training_records as gb_training_records
 from ml_training_lab.optuna_support import assert_tuning_protocol, macro_mae, originals_for_well, prepare_study
-from ml_training_lab.resnet_workflow import ResNetFinalConfig, ResNetTuningConfig, accelerator, create_resnet_backbone
+from ml_training_lab.resnet_workflow import (
+    ResNetFinalConfig,
+    ResNetTuningConfig,
+    accelerator,
+    create_resnet_backbone,
+    training_records as resnet_training_records,
+)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -33,6 +39,21 @@ class ProtocolTests(unittest.TestCase):
         validation = originals_for_well(self.frame, 2)
         self.assertEqual(len(validation), 1)
         self.assertFalse(validation["is_augmented"].any())
+
+    def test_gb_training_can_exclude_augmented_rows(self) -> None:
+        training = gb_training_records(self.frame, (2, 3), include_augmented_records=False)
+        self.assertEqual(len(training), 2)
+        self.assertFalse(training["is_augmented"].any())
+
+    def test_resnet_training_can_exclude_augmented_rows(self) -> None:
+        training = resnet_training_records(self.frame, (2, 3), include_augmented_records=False)
+        self.assertEqual(len(training), 2)
+        self.assertFalse(training["is_augmented"].any())
+
+    def test_training_keeps_augmented_rows_by_default(self) -> None:
+        training = gb_training_records(self.frame, (2, 3), include_augmented_records=True)
+        self.assertEqual(len(training), 4)
+        self.assertTrue(training["is_augmented"].any())
 
     def test_macro_mae_averages_targets_equally(self) -> None:
         score, target_scores = macro_mae(np.array([[0.0, 0.0]]), np.array([[2.0, 4.0]]))
@@ -91,6 +112,8 @@ class ResNetBackboneTests(unittest.TestCase):
         self.assertEqual(tuning_config.num_workers, 13)
         self.assertEqual(final_config.num_workers, 13)
         self.assertTrue(final_config.save_predictions)
+        self.assertTrue(tuning_config.include_augmented_records)
+        self.assertTrue(final_config.include_augmented_records)
 
     @patch("ml_training_lab.resnet_workflow.torch.backends.mps.is_available", return_value=True)
     def test_mps_is_selected_when_available(self, _is_available) -> None:

@@ -80,6 +80,7 @@ class ResNetTuningConfig:
     study_name: str = "resnet_macro_mae_v1"
     total_trials: int = 20
     smoke_mode: bool = False
+    include_augmented_records: bool = True
     tuning_wells: tuple[int, ...] = (2, 3, 4)
     holdout_well: int = 1
     num_workers: int = 13
@@ -101,6 +102,7 @@ class ResNetTuningConfig:
 class ResNetFinalConfig:
     project_root: Path
     optuna_summary_path: Path
+    include_augmented_records: bool = True
     holdout_well: int = 1
     training_wells: tuple[int, ...] = (2, 3, 4)
     num_workers: int = 13
@@ -136,6 +138,16 @@ class SludgeImageDataset(Dataset):
         image = (image - self.mean) / self.std
         targets = row[list(TARGET_COLUMNS)].to_numpy(dtype=np.float32)
         return torch.from_numpy(image), torch.from_numpy(targets)
+
+
+def training_records(df: pd.DataFrame, wells: tuple[int, ...], include_augmented_records: bool) -> pd.DataFrame:
+    result = df[df["well_id"].isin(wells)]
+    if not include_augmented_records:
+        result = result[~result["is_augmented"].astype(bool)]
+    result = result.copy()
+    if result.empty:
+        raise ValueError("No training samples remain after applying the augmented-record filter.")
+    return result
 
 
 def create_resnet_backbone() -> nn.Module:
@@ -276,6 +288,7 @@ def tune_resnet(config: ResNetTuningConfig) -> Path:
     dataset_hash = file_sha256(config.dataset_path)
     protocol = {
         "tuning_wells": list(config.tuning_wells), "holdout_well": config.holdout_well,
+        "include_augmented_records": config.include_augmented_records,
         "validation_originals_only": True, "input_size": 512, "normalization": "ImageNet",
         "max_epochs_per_fold": max_epochs,
     }
@@ -294,7 +307,11 @@ def tune_resnet(config: ResNetTuningConfig) -> Path:
         fold_scores: list[float] = []
         fold_best_epochs: list[int] = []
         for fold_index, validation_well in enumerate(config.tuning_wells):
-            train_df = df[df["well_id"].isin(set(config.tuning_wells) - {validation_well})]
+            train_df = training_records(
+                df,
+                tuple(sorted(set(config.tuning_wells) - {validation_well})),
+                config.include_augmented_records,
+            )
             validation_df = originals_for_well(df, validation_well)
             if config.holdout_well in train_df["well_id"].unique():
                 raise AssertionError("Holdout leakage detected.")
@@ -341,6 +358,8 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     protocol = summary.get("protocol", {})
     if protocol.get("tuning_wells") != list(config.training_wells) or protocol.get("holdout_well") != config.holdout_well:
         raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
+    if protocol.get("include_augmented_records", True) != config.include_augmented_records:
+        raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if protocol.get("input_size") != 512 or protocol.get("normalization") != "ImageNet":
         raise ValueError("The Optuna summary uses incompatible ResNet preprocessing.")
     df = pd.read_parquet(dataset_path)
@@ -350,7 +369,7 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     if not best_epochs or any(epoch < 1 for epoch in best_epochs):
         raise ValueError("The winning trial does not contain valid fold best epochs.")
     final_epochs = max(1, int(np.median(best_epochs)))
-    train_df = df[df["well_id"].isin(config.training_wells)]
+    train_df = training_records(df, config.training_wells, config.include_augmented_records)
     holdout_df = originals_for_well(df, config.holdout_well)
     model = SludgeResNet(params, scheduler_enabled=False)
     trainer = pl.Trainer(max_epochs=final_epochs, accelerator=accelerator(), devices=1, logger=False, enable_checkpointing=False)

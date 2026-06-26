@@ -56,6 +56,7 @@ class GBTuningConfig:
     study_name: str = "catboost_macro_mae_v1"
     total_trials: int = 50
     smoke_mode: bool = False
+    include_augmented_records: bool = True
     tuning_wells: tuple[int, ...] = (2, 3, 4)
     holdout_well: int = 1
 
@@ -72,6 +73,7 @@ class GBTuningConfig:
 class GBFinalConfig:
     project_root: Path
     optuna_summary_path: Path
+    include_augmented_records: bool = True
     training_wells: tuple[int, ...] = (2, 3, 4)
     holdout_well: int = 1
     save_predictions: bool = True
@@ -88,6 +90,16 @@ def load_dataset(path: Path) -> pd.DataFrame:
     df = df.copy()
     df["sludge_dinov3_emb"] = df["sludge_dinov3_emb"].map(parse_embedding)
     return df
+
+
+def training_records(df: pd.DataFrame, wells: tuple[int, ...], include_augmented_records: bool) -> pd.DataFrame:
+    result = df[df["well_id"].isin(wells)]
+    if not include_augmented_records:
+        result = result[~result["is_augmented"].astype(bool)]
+    result = result.copy()
+    if result.empty:
+        raise ValueError("No training samples remain after applying the augmented-record filter.")
+    return result
 
 
 def fit_fold_features(
@@ -146,6 +158,7 @@ def tune_catboost(config: GBTuningConfig) -> Path:
     dataset_hash = file_sha256(config.dataset_path)
     protocol = {
         "tuning_wells": list(config.tuning_wells), "holdout_well": config.holdout_well,
+        "include_augmented_records": config.include_augmented_records,
         "validation_originals_only": True, "pca_fit_inside_fold": True,
         "max_iterations": iterations, "early_stopping_rounds": early_stopping,
     }
@@ -166,7 +179,11 @@ def tune_catboost(config: GBTuningConfig) -> Path:
         fold_target_scores: list[list[float]] = []
         fold_best_iterations: list[int] = []
         for fold_index, validation_well in enumerate(config.tuning_wells):
-            train_df = df[df["well_id"].isin(set(config.tuning_wells) - {validation_well})]
+            train_df = training_records(
+                df,
+                tuple(sorted(set(config.tuning_wells) - {validation_well})),
+                config.include_augmented_records,
+            )
             validation_df = originals_for_well(df, validation_well)
             if config.holdout_well in train_df["well_id"].unique():
                 raise AssertionError("Holdout leakage detected.")
@@ -213,6 +230,8 @@ def train_final_catboost(config: GBFinalConfig) -> tuple[Path, dict[str, Any]]:
     protocol = summary.get("protocol", {})
     if protocol.get("tuning_wells") != list(config.training_wells) or protocol.get("holdout_well") != config.holdout_well:
         raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
+    if protocol.get("include_augmented_records", True) != config.include_augmented_records:
+        raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if not protocol.get("pca_fit_inside_fold"):
         raise ValueError("The Optuna summary does not guarantee fold-local PCA fitting.")
     df = load_dataset(dataset_path)
@@ -222,7 +241,7 @@ def train_final_catboost(config: GBFinalConfig) -> tuple[Path, dict[str, Any]]:
     if not best_iterations or any(iteration < 1 for iteration in best_iterations):
         raise ValueError("The winning trial does not contain valid fold best iterations.")
     final_iterations = max(1, int(np.median(best_iterations)))
-    train_df = df[df["well_id"].isin(config.training_wells)]
+    train_df = training_records(df, config.training_wells, config.include_augmented_records)
     holdout_df = originals_for_well(df, config.holdout_well)
     x_train, x_holdout, pca = fit_fold_features(train_df, holdout_df, params["pca_components"])
     y_train = train_df[list(TARGET_COLUMNS)].reset_index(drop=True)
