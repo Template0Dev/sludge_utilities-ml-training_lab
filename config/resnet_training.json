@@ -117,9 +117,8 @@
         "lr_factor": 0.5,
         "lr_patience": 3,
         "random_seed": 42
-    },
-    "final_training": {
-        "optuna_summary_path": "resnet_target_well_v1_summary.json",
-        "save_predictions": true
-    }
+  },
+  "final_training": {
+    "save_predictions": true
+  }
 }

@@ -1,9 +1,13 @@
 {
-    "target_well": 1,
+    "target_well": 4,
     "training_wells": [
+        1,
         2,
         3,
-        4
+        5,
+        6,
+        7,
+        8
     ],
     "include_augmented_records": true,
     "target_columns": [
@@ -105,7 +109,6 @@
         "task_type": "CPU"
     },
     "final_training": {
-        "optuna_summary_path": "catboost_target_well_v1_summary.json",
         "save_predictions": true
     }
 }
