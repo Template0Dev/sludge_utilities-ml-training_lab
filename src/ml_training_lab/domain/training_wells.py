@@ -1,34 +1,6 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
-
 import pandas as pd
-
-
-def load_pipeline_config(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Pipeline config does not exist: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def resolve_project_path(project_root: Path, value: str | Path) -> Path:
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return project_root / path
-
-
-def optional_wells(value: Any) -> tuple[int, ...] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list | tuple):
-        raise TypeError("training_wells must be null or a list of well ids.")
-    wells = tuple(int(item) for item in value)
-    if not wells:
-        raise ValueError("training_wells cannot be empty.")
-    return wells
 
 
 def resolve_training_wells(

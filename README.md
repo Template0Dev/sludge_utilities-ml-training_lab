@@ -1,18 +1,86 @@
 # ML training lab
 
-Training pipeline settings live in `config/gb_training.json` and `config/resnet_training.json`.
-The `target_well` is the validation/evaluation well used by Optuna and final reporting.
-Set `training_wells` to the wells that may be used for fitting; the current configs use
-target well 2 and explicitly exclude well 1 from training.
+The project uses a singular PADIC layout under `src/ml_training_lab`:
 
-## Optuna workflow
+- `controller/`: notebook-facing API functions.
+- `application/`: one use case per file.
+- `domain/`: pure training rules, metrics, protocol checks, and feature rules.
+- `infrastructure/`: filesystem and library adapters.
+- `presentation/`: Pydantic request, response, and config DTOs.
+- `shared/`: single-purpose technical helpers.
 
-1. Run `notebooks/resnet/01-optuna_tuning.ipynb` or `notebooks/gb/02-optuna_params_tuning.ipynb`.
-2. For a quick integration check, set `optuna.smoke_mode` to `true` in the model config.
-3. Keep the explicit generated summary path in the corresponding final-training notebook.
-4. Run `notebooks/resnet/02-final_model_training.ipynb` or `notebooks/gb/03-final_catboost_training.ipynb`.
+Notebooks should define local paths and call controller functions. Training and tuning
+implementations live in `src`.
 
-Studies are persisted under `output/<model>/optuna/`. Rerunning a study resumes it only until its configured total trial count is reached. Final-training notebooks reject summaries produced from another dataset or validation protocol.
-Optuna trains on the configured training wells and validates on original samples from the configured target well.
+## Controller workflow
 
-ResNet tuning uses 512×512 ImageNet-normalized inputs. CatBoost fits PCA independently within every validation fold and saves the final PCA transformer alongside the model.
+```python
+from ml_training_lab.controller.catboost_tuning_controller import tune_catboost
+from ml_training_lab.presentation.requests import CatBoostRequest
+
+request = CatBoostRequest(
+    project_root=PROJECT_ROOT,
+    config_path=PROJECT_ROOT / "config/gb_training.json",
+    base_dataset_path=PROJECT_ROOT / "data/meta/interim/metadata_augmented.parquet",
+    embedding_dataset_path=PROJECT_ROOT / "data/meta/processed/gb/metadata_dinov3_embeddings.parquet",
+)
+result = tune_catboost(request)
+```
+
+Equivalent controllers exist for final CatBoost training, ResNet tuning/training,
+augmentation, and DINOv3 embedding extraction.
+
+## Configuration
+
+Training configs define target columns, feature flags, tuning params, search params,
+initial hyper-params, fixed hyper-params, and output path parts.
+
+GB embedding features are independent:
+
+- `should_use_sludge_embeddings`: joins and uses `sludge_dinov3_emb`.
+- `should_use_lba_embeddings`: joins and uses `lba_dinov3_emb`.
+- If both are false, only `features.base_columns` are used.
+
+Output roots are built from config parts:
+
+```python
+Path(output_base_folder).joinpath(output_gb_sub_folder, output_runs_prefix_for_saving)
+Path(output_base_folder).joinpath(output_gb_sub_folder, output_tuning_prefix_for_saving)
+```
+
+The same rule applies to ResNet with `output_resnet_sub_folder`.
+
+## Outputs
+
+Final training writes one folder per run:
+
+```text
+output/
+  gb/
+    runs/
+      {uuid}/
+        request_meta.json
+        config_snapshot.json
+        version_info.txt
+        model.cbm
+        embeddings.joblib
+        predictions.csv
+    tuning/
+      {study_name}.db
+      {study_name}_summary.json
+      {study_name}_trials.csv
+  resnet/
+    runs/
+      {uuid}/
+        request_meta.json
+        config_snapshot.json
+        version_info.txt
+        model.ckpt
+        predictions.csv
+    tuning/
+      {study_name}.db
+      {study_name}_summary.json
+      {study_name}_trials.csv
+```
+
+Optuna tuning files are persistent and intentionally outside final-training run folders.
