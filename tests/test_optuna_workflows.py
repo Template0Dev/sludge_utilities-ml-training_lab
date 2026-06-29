@@ -20,6 +20,7 @@ from ml_training_lab.domain.record_selection import originals_for_well, training
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol, target_well_objective_metadata
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
+from ml_training_lab.infrastructure.catboost_parameters import model_parameters
 from ml_training_lab.infrastructure.embedding_joiner import load_feature_dataset
 from ml_training_lab.infrastructure.last_tune_marker import read_last_tune_id, write_last_tune_id
 from ml_training_lab.infrastructure.optuna_study_repository import prepare_study
@@ -30,7 +31,7 @@ from ml_training_lab.infrastructure.tuning_run_directory import create_tuning_ru
 from ml_training_lab.infrastructure.tuning_summary_path import latest_tuning_summary_path
 from ml_training_lab.presentation.common_config import AppOutputConfig, FeatureConfig
 from ml_training_lab.presentation.model_configs import CatBoostPipelineConfig, ResNetPipelineConfig
-from ml_training_lab.shared.device_selector import accelerator
+from ml_training_lab.shared.device_selector import accelerator, catboost_task_type
 
 
 class ProtocolTests(unittest.TestCase):
@@ -306,8 +307,36 @@ class ResNetBackboneTests(unittest.TestCase):
         )
 
     @patch("ml_training_lab.shared.device_selector.torch.backends.mps.is_available", return_value=True)
-    def test_mps_is_selected_when_available(self, _is_available) -> None:
+    @patch("ml_training_lab.shared.device_selector.torch.cuda.is_available", return_value=False)
+    def test_mps_is_selected_when_available(self, _cuda_available, _mps_available) -> None:
         self.assertEqual(accelerator(), "mps")
+
+    @patch("ml_training_lab.shared.device_selector.torch.backends.mps.is_available", return_value=True)
+    @patch("ml_training_lab.shared.device_selector.torch.cuda.is_available", return_value=True)
+    def test_cuda_is_selected_before_mps(self, _cuda_available, _mps_available) -> None:
+        self.assertEqual(accelerator(), "cuda")
+
+
+class CatBoostDeviceTests(unittest.TestCase):
+    @patch("ml_training_lab.shared.device_selector.torch.cuda.is_available", return_value=True)
+    def test_catboost_uses_gpu_when_cuda_is_available(self, _cuda_available) -> None:
+        self.assertEqual(catboost_task_type(), "GPU")
+
+    @patch("ml_training_lab.shared.device_selector.torch.cuda.is_available", return_value=True)
+    def test_catboost_configured_task_type_overrides_cuda(self, _cuda_available) -> None:
+        self.assertEqual(catboost_task_type("CPU"), "CPU")
+
+    @patch("ml_training_lab.shared.device_selector.torch.cuda.is_available", return_value=True)
+    def test_catboost_model_parameters_set_gpu_without_config_override(self, _cuda_available) -> None:
+        params = model_parameters(
+            {"learning_rate": 0.1, "depth": 4, "pca_components": 16},
+            {"iterations": 100, "early_stopping_rounds": 10, "loss_function": "MultiRMSE"},
+            iterations=20,
+        )
+
+        self.assertEqual(params["task_type"], "GPU")
+        self.assertEqual(params["iterations"], 20)
+        self.assertNotIn("pca_components", params)
 
 
 if __name__ == "__main__":

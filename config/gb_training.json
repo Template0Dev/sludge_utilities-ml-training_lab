@@ -105,9 +105,8 @@
         "loss_function": "MultiRMSE",
         "eval_metric": "MultiRMSE",
         "early_stopping_rounds": 200,
-        "random_seed": 42,
-        "task_type": "CPU"
-    },
+        "random_seed": 42
+  },
     "final_training": {
         "save_predictions": true
     }

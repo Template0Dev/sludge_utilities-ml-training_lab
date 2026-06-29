@@ -4,7 +4,19 @@ import torch
 
 
 def accelerator() -> str:
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def catboost_task_type(configured_task_type: str | None = None) -> str:
+    if configured_task_type:
+        return configured_task_type
+    if torch.cuda.is_available():
+        return "GPU"
+    return "CPU"
 
 
 def torch_device() -> torch.device:
