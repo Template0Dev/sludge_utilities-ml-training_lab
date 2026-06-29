@@ -26,16 +26,10 @@ input/resnet/*
 !input/resnet/.gitkeep
 
 # Output directories (ignore content, preserve folder via .gitkeep)
-output/**/predictions/*
-!output/**/predictions/.gitkeep
-output/**/models/*
-!output/**/models/.gitkeep
-output/**/logs/*
-!output/**/logs/.gitkeep
-output/**/meta/*
-!output/**/meta/.gitkeep
-output/**/optuna/*
-!output/**/optuna/.gitkeep
+output/gb/**/*
+output/resnet/**/*
+## Output subfolders preserve ('cause packaged results will be saved in there)
+!output/**/.gitkeep
 
 catboost_info/
 
