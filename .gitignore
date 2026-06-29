@@ -10,14 +10,14 @@ wheels/
 .venv
 
 # Data directories (ignore content, preserve folder via .gitkeep)
-data/images/*
-!data/images/.gitkeep
-data/meta/processed/gb/*
-!data/meta/processed/gb/.gitkeep
-data/meta/interim/*
-!data/meta/interim/.gitkeep
-data/meta/raw/*
-!data/meta/raw/.gitkeep
+data/images*/*
+!data/images*/.gitkeep
+data/meta*/processed/gb/*
+!data/meta*/processed/gb/.gitkeep
+data/meta*/interim/*
+!data/meta*/interim/.gitkeep
+data/meta*/raw/*
+!data/meta*/raw/.gitkeep
 
 # Input directory
 input/gb/*

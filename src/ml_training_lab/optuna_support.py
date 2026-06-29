@@ -102,11 +102,7 @@ def export_study(
         "configuration_signature": signature,
         "dataset_path": str(dataset_path),
         "dataset_sha256": dataset_hash,
-        "objective": {
-            "name": "equal-well macro MAE",
-            "direction": "minimize",
-            "aggregation": "mean of per-validation-well target-macro MAE",
-        },
+        "objective": objective_metadata(protocol),
         "protocol": protocol,
         "search_space": search_space,
         "fixed_parameters": fixed_parameters,
@@ -121,6 +117,20 @@ def export_study(
     summary_path = output_dir / f"{study.study_name}_summary.json"
     summary_path.write_text(json.dumps(json_value(summary), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return summary_path
+
+
+def objective_metadata(protocol: dict[str, Any]) -> dict[str, str]:
+    if protocol.get("validation_strategy") == "target_well":
+        return {
+            "name": "target-well macro MAE",
+            "direction": "minimize",
+            "aggregation": "target-macro MAE on original samples from the configured target well",
+        }
+    return {
+        "name": "equal-well macro MAE",
+        "direction": "minimize",
+        "aggregation": "mean of per-validation-well target-macro MAE",
+    }
 
 
 def load_summary(path: Path, *, model_type: str, dataset_path: Path) -> dict[str, Any]:

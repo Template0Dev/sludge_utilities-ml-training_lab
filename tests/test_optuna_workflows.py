@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,8 +14,15 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ml_training_lab.gb_workflow import fit_fold_features, training_records as gb_training_records
-from ml_training_lab.optuna_support import assert_tuning_protocol, macro_mae, originals_for_well, prepare_study
+from ml_training_lab.gb_workflow import GBTuningConfig, fit_fold_features, training_records as gb_training_records
+from ml_training_lab.optuna_support import (
+    assert_tuning_protocol,
+    macro_mae,
+    objective_metadata,
+    originals_for_well,
+    prepare_study,
+)
+from ml_training_lab.pipeline_config import resolve_training_wells
 from ml_training_lab.resnet_workflow import (
     ResNetFinalConfig,
     ResNetTuningConfig,
@@ -55,6 +63,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(training), 4)
         self.assertTrue(training["is_augmented"].any())
 
+    def test_training_wells_default_to_all_except_target(self) -> None:
+        wells = resolve_training_wells(self.frame, target_well=1, configured_wells=None)
+        self.assertEqual(wells, (2, 3, 4))
+
     def test_macro_mae_averages_targets_equally(self) -> None:
         score, target_scores = macro_mae(np.array([[0.0, 0.0]]), np.array([[2.0, 4.0]]))
         self.assertEqual(target_scores, [2.0, 4.0])
@@ -86,6 +98,67 @@ class PCAIsolationTests(unittest.TestCase):
         np.testing.assert_allclose(pca.mean_, np.array([1 / 3, 1 / 3]))
 
 
+class PipelineConfigTests(unittest.TestCase):
+    def test_gb_tuning_config_loads_from_file(self) -> None:
+        from ml_training_lab.gb_workflow import GBTuningConfig
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "target_well": 6,
+                    "training_wells": None,
+                    "include_augmented_records": False,
+                    "optuna": {"study_name": "study", "total_trials": 3, "smoke_mode": True},
+                }),
+                encoding="utf-8",
+            )
+
+            config = GBTuningConfig.from_file(Path("."), config_path)
+
+        self.assertEqual(config.target_well, 6)
+        self.assertIsNone(config.training_wells)
+        self.assertFalse(config.include_augmented_records)
+        self.assertEqual(config.study_name, "study")
+        self.assertEqual(config.total_trials, 3)
+        self.assertTrue(config.smoke_mode)
+
+    def test_resnet_final_config_resolves_relative_summary_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            config_path = project_root / "config.json"
+            config_path.write_text(
+                json.dumps({
+                    "target_well": 2,
+                    "training_wells": [1, 3],
+                    "data_loader": {"num_workers": 2},
+                    "final_training": {"optuna_summary_path": "output/summary.json", "save_predictions": False},
+                }),
+                encoding="utf-8",
+            )
+
+            config = ResNetFinalConfig.from_file(project_root, config_path)
+
+        self.assertEqual(config.target_well, 2)
+        self.assertEqual(config.training_wells, (1, 3))
+        self.assertEqual(config.num_workers, 2)
+        self.assertFalse(config.save_predictions)
+        self.assertEqual(config.optuna_summary_path, project_root / "output/summary.json")
+
+    def test_checked_in_gb_config_excludes_well_one_and_targets_well_two(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        config = GBTuningConfig.from_file(project_root, project_root / "config/gb_training.json")
+
+        self.assertEqual(config.target_well, 2)
+        self.assertEqual(config.training_wells, (3, 4, 5, 6, 7, 8))
+        self.assertNotIn(1, config.training_wells)
+
+    def test_target_well_objective_metadata(self) -> None:
+        metadata = objective_metadata({"validation_strategy": "target_well"})
+
+        self.assertEqual(metadata["name"], "target-well macro MAE")
+
+
 class ResNetBackboneTests(unittest.TestCase):
     @patch("ml_training_lab.resnet_workflow.hf_hub_download")
     @patch("ml_training_lab.resnet_workflow.timm.create_model")
@@ -114,6 +187,8 @@ class ResNetBackboneTests(unittest.TestCase):
         self.assertTrue(final_config.save_predictions)
         self.assertTrue(tuning_config.include_augmented_records)
         self.assertTrue(final_config.include_augmented_records)
+        self.assertIsNone(tuning_config.training_wells)
+        self.assertIsNone(final_config.training_wells)
 
     @patch("ml_training_lab.resnet_workflow.torch.backends.mps.is_available", return_value=True)
     def test_mps_is_selected_when_available(self, _is_available) -> None:

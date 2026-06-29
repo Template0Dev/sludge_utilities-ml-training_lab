@@ -1,0 +1,14 @@
+{
+  "target_well": 1,
+  "training_wells": [2, 3, 4],
+  "include_augmented_records": true,
+  "optuna": {
+    "study_name": "catboost_target_well_v1",
+    "total_trials": 50,
+    "smoke_mode": false
+  },
+  "final_training": {
+    "optuna_summary_path": "output/gb/optuna/catboost_target_well_v1_summary.json",
+    "save_predictions": true
+  }
+}

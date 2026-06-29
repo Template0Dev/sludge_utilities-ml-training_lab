@@ -42,6 +42,7 @@ from .optuna_support import (
     originals_for_well,
     prepare_study,
 )
+from .pipeline_config import load_pipeline_config, optional_wells, resolve_project_path, resolve_training_wells
 
 
 TARGET_COLUMNS = (
@@ -77,13 +78,29 @@ RESNET_HF_WEIGHTS = "model.safetensors"
 @dataclass(frozen=True)
 class ResNetTuningConfig:
     project_root: Path
-    study_name: str = "resnet_macro_mae_v1"
+    study_name: str = "resnet_target_well_v1"
     total_trials: int = 20
     smoke_mode: bool = False
     include_augmented_records: bool = True
-    tuning_wells: tuple[int, ...] = (2, 3, 4)
-    holdout_well: int = 1
+    training_wells: tuple[int, ...] | None = None
+    target_well: int = 1
     num_workers: int = 13
+
+    @classmethod
+    def from_file(cls, project_root: Path, path: Path) -> "ResNetTuningConfig":
+        config = load_pipeline_config(path)
+        optuna_config = config.get("optuna", {})
+        data_loader_config = config.get("data_loader", {})
+        return cls(
+            project_root=project_root,
+            study_name=optuna_config.get("study_name", cls.study_name),
+            total_trials=int(optuna_config.get("total_trials", cls.total_trials)),
+            smoke_mode=bool(optuna_config.get("smoke_mode", cls.smoke_mode)),
+            include_augmented_records=bool(config.get("include_augmented_records", cls.include_augmented_records)),
+            training_wells=optional_wells(config.get("training_wells")),
+            target_well=int(config.get("target_well", cls.target_well)),
+            num_workers=int(data_loader_config.get("num_workers", cls.num_workers)),
+        )
 
     @property
     def dataset_path(self) -> Path:
@@ -103,10 +120,29 @@ class ResNetFinalConfig:
     project_root: Path
     optuna_summary_path: Path
     include_augmented_records: bool = True
-    holdout_well: int = 1
-    training_wells: tuple[int, ...] = (2, 3, 4)
+    target_well: int = 1
+    training_wells: tuple[int, ...] | None = None
     num_workers: int = 13
     save_predictions: bool = True
+
+    @classmethod
+    def from_file(cls, project_root: Path, path: Path) -> "ResNetFinalConfig":
+        config = load_pipeline_config(path)
+        final_config = config.get("final_training", {})
+        data_loader_config = config.get("data_loader", {})
+        optuna_summary_path = final_config.get(
+            "optuna_summary_path",
+            "output/resnet/optuna/resnet_target_well_v1_summary.json",
+        )
+        return cls(
+            project_root=project_root,
+            optuna_summary_path=resolve_project_path(project_root, optuna_summary_path),
+            include_augmented_records=bool(config.get("include_augmented_records", cls.include_augmented_records)),
+            target_well=int(config.get("target_well", cls.target_well)),
+            training_wells=optional_wells(config.get("training_wells")),
+            num_workers=int(data_loader_config.get("num_workers", cls.num_workers)),
+            save_predictions=bool(final_config.get("save_predictions", cls.save_predictions)),
+        )
 
 
 def seed_everything() -> None:
@@ -282,14 +318,18 @@ def cleanup_model() -> None:
 def tune_resnet(config: ResNetTuningConfig) -> Path:
     seed_everything()
     df = pd.read_parquet(config.dataset_path)
-    assert_tuning_protocol(df, config.tuning_wells, config.holdout_well)
+    training_wells = resolve_training_wells(
+        df, target_well=config.target_well, configured_wells=config.training_wells
+    )
+    assert_tuning_protocol(df, training_wells, config.target_well)
     max_epochs = 1 if config.smoke_mode else FIXED_PARAMETERS["max_epochs"]
     study_name = f"{config.study_name}_smoke" if config.smoke_mode else config.study_name
     dataset_hash = file_sha256(config.dataset_path)
     protocol = {
-        "tuning_wells": list(config.tuning_wells), "holdout_well": config.holdout_well,
+        "training_wells": list(training_wells), "target_well": config.target_well,
         "include_augmented_records": config.include_augmented_records,
-        "validation_originals_only": True, "input_size": 512, "normalization": "ImageNet",
+        "validation_strategy": "target_well", "validation_originals_only": True,
+        "input_size": 512, "normalization": "ImageNet",
         "max_epochs_per_fold": max_epochs,
     }
     signature = config_signature({
@@ -304,43 +344,36 @@ def tune_resnet(config: ResNetTuningConfig) -> Path:
 
     def objective(trial: optuna.Trial) -> float:
         params = suggested_params(trial)
-        fold_scores: list[float] = []
-        fold_best_epochs: list[int] = []
-        for fold_index, validation_well in enumerate(config.tuning_wells):
-            train_df = training_records(
-                df,
-                tuple(sorted(set(config.tuning_wells) - {validation_well})),
-                config.include_augmented_records,
+        train_df = training_records(df, training_wells, config.include_augmented_records)
+        validation_df = originals_for_well(df, config.target_well)
+        if config.target_well in train_df["well_id"].unique():
+            raise AssertionError("Target leakage detected.")
+        metric = BestMetric()
+        model = SludgeResNet(params)
+        trainer = pl.Trainer(
+            max_epochs=max_epochs, accelerator=accelerator(), devices=1, logger=False,
+            enable_checkpointing=False, deterministic=False, enable_progress_bar=not config.smoke_mode,
+            callbacks=[metric, TrialPruning(trial, 0, max_epochs), EarlyStopping("val_mae", mode="min", patience=6)],
+        )
+        try:
+            trainer.fit(
+                model,
+                train_dataloaders=loader(train_df, config, params["batch_size"], True),
+                val_dataloaders=loader(validation_df, config, params["batch_size"], False),
             )
-            validation_df = originals_for_well(df, validation_well)
-            if config.holdout_well in train_df["well_id"].unique():
-                raise AssertionError("Holdout leakage detected.")
-            metric = BestMetric()
-            model = SludgeResNet(params)
-            trainer = pl.Trainer(
-                max_epochs=max_epochs, accelerator=accelerator(), devices=1, logger=False,
-                enable_checkpointing=False, deterministic=False, enable_progress_bar=not config.smoke_mode,
-                callbacks=[metric, TrialPruning(trial, fold_index, max_epochs), EarlyStopping("val_mae", mode="min", patience=6)],
-            )
-            try:
-                trainer.fit(
-                    model,
-                    train_dataloaders=loader(train_df, config, params["batch_size"], True),
-                    val_dataloaders=loader(validation_df, config, params["batch_size"], False),
-                )
-            except RuntimeError as error:
-                if "out of memory" in str(error).lower():
-                    trial.set_user_attr("failure", "out_of_memory")
-                    raise optuna.TrialPruned("Device out of memory") from error
-                raise
-            finally:
-                del model, trainer
-                cleanup_model()
-            fold_scores.append(metric.best_value)
-            fold_best_epochs.append(metric.best_epoch)
-        trial.set_user_attr("fold_scores", fold_scores)
-        trial.set_user_attr("fold_best_epochs", fold_best_epochs)
-        return float(np.mean(fold_scores))
+        except RuntimeError as error:
+            if "out of memory" in str(error).lower():
+                trial.set_user_attr("failure", "out_of_memory")
+                raise optuna.TrialPruned("Device out of memory") from error
+            raise
+        finally:
+            del model, trainer
+            cleanup_model()
+        trial.set_user_attr("validation_well", config.target_well)
+        trial.set_user_attr("validation_score", metric.best_value)
+        trial.set_user_attr("fold_scores", [metric.best_value])
+        trial.set_user_attr("fold_best_epochs", [metric.best_epoch])
+        return metric.best_value
 
     if remaining:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
@@ -356,21 +389,26 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     dataset_path = config.project_root / "data/meta/interim/metadata_augmented.parquet"
     summary = load_summary(config.optuna_summary_path, model_type="resnet", dataset_path=dataset_path)
     protocol = summary.get("protocol", {})
-    if protocol.get("tuning_wells") != list(config.training_wells) or protocol.get("holdout_well") != config.holdout_well:
+    df = pd.read_parquet(dataset_path)
+    training_wells = resolve_training_wells(
+        df, target_well=config.target_well, configured_wells=config.training_wells
+    )
+    summary_training_wells = protocol.get("training_wells", protocol.get("tuning_wells"))
+    summary_target_well = protocol.get("target_well", protocol.get("holdout_well"))
+    if summary_training_wells != list(training_wells) or summary_target_well != config.target_well:
         raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
     if protocol.get("include_augmented_records", True) != config.include_augmented_records:
         raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if protocol.get("input_size") != 512 or protocol.get("normalization") != "ImageNet":
         raise ValueError("The Optuna summary uses incompatible ResNet preprocessing.")
-    df = pd.read_parquet(dataset_path)
-    assert_tuning_protocol(df, config.training_wells, config.holdout_well)
+    assert_tuning_protocol(df, training_wells, config.target_well)
     params = summary["best_trial"]["params"]
     best_epochs = summary["best_trial"]["user_attrs"].get("fold_best_epochs")
     if not best_epochs or any(epoch < 1 for epoch in best_epochs):
         raise ValueError("The winning trial does not contain valid fold best epochs.")
     final_epochs = max(1, int(np.median(best_epochs)))
-    train_df = training_records(df, config.training_wells, config.include_augmented_records)
-    holdout_df = originals_for_well(df, config.holdout_well)
+    train_df = training_records(df, training_wells, config.include_augmented_records)
+    holdout_df = originals_for_well(df, config.target_well)
     model = SludgeResNet(params, scheduler_enabled=False)
     trainer = pl.Trainer(max_epochs=final_epochs, accelerator=accelerator(), devices=1, logger=False, enable_checkpointing=False)
     started_at = dt.datetime.now().isoformat(timespec="seconds")
@@ -392,8 +430,8 @@ def train_final_resnet(config: ResNetFinalConfig) -> tuple[Path, dict[str, Any]]
     metadata = {
         "training_id": training_id, "model_type": "ResNet", "model_file": model_path.name,
         "training_started_at": started_at, "training_completed_at": dt.datetime.now().isoformat(timespec="seconds"),
-        "hyperparameters": params, "final_epochs": final_epochs, "training_wells": list(config.training_wells),
-        "holdout_well": config.holdout_well, "final_training_metrics": metrics,
+        "hyperparameters": params, "final_epochs": final_epochs, "training_wells": list(training_wells),
+        "target_well": config.target_well, "final_training_metrics": metrics,
         "optuna": {"study_name": summary["study_name"], "trial_number": summary["best_trial"]["number"],
                    "objective_value": summary["best_trial"]["value"], "summary_path": str(config.optuna_summary_path)},
     }

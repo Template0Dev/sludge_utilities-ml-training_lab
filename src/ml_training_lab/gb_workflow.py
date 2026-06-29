@@ -26,10 +26,12 @@ from .optuna_support import (
     originals_for_well,
     prepare_study,
 )
+from .pipeline_config import load_pipeline_config, optional_wells, resolve_project_path, resolve_training_wells
 
 
-TARGET_COLUMNS = ("sandstone_sludge", "siltstone_sludge", "argillite_sludge")
 BASE_FEATURE_COLUMNS = ("interval_start", "interval_end")
+TARGET_COLUMNS = ("sandstone_sludge", "siltstone_sludge", "argillite_sludge")
+
 SEARCH_SPACE = {
     "pca_components": {"type": "categorical", "choices": [16, 32, 64, 128]},
     "learning_rate": {"type": "float", "low": 0.005, "high": 0.1, "log": True},
@@ -39,6 +41,7 @@ SEARCH_SPACE = {
     "rsm": {"type": "float", "low": 0.5, "high": 1.0},
     "random_strength": {"type": "float", "low": 1e-3, "high": 10.0, "log": True},
 }
+
 BASELINE = {
     "pca_components": 32, "learning_rate": 0.015, "depth": 5, "l2_leaf_reg": 10.0,
     "subsample": 0.8, "rsm": 0.7, "random_strength": 1.0,
@@ -53,12 +56,26 @@ FIXED_PARAMETERS = {
 @dataclass(frozen=True)
 class GBTuningConfig:
     project_root: Path
-    study_name: str = "catboost_macro_mae_v1"
+    study_name: str = "catboost_target_well_v1"
     total_trials: int = 50
     smoke_mode: bool = False
     include_augmented_records: bool = True
-    tuning_wells: tuple[int, ...] = (2, 3, 4)
-    holdout_well: int = 1
+    training_wells: tuple[int, ...] | None = None
+    target_well: int = 1
+
+    @classmethod
+    def from_file(cls, project_root: Path, path: Path) -> "GBTuningConfig":
+        config = load_pipeline_config(path)
+        optuna_config = config.get("optuna", {})
+        return cls(
+            project_root=project_root,
+            study_name=optuna_config.get("study_name", cls.study_name),
+            total_trials=int(optuna_config.get("total_trials", cls.total_trials)),
+            smoke_mode=bool(optuna_config.get("smoke_mode", cls.smoke_mode)),
+            include_augmented_records=bool(config.get("include_augmented_records", cls.include_augmented_records)),
+            training_wells=optional_wells(config.get("training_wells")),
+            target_well=int(config.get("target_well", cls.target_well)),
+        )
 
     @property
     def dataset_path(self) -> Path:
@@ -74,9 +91,26 @@ class GBFinalConfig:
     project_root: Path
     optuna_summary_path: Path
     include_augmented_records: bool = True
-    training_wells: tuple[int, ...] = (2, 3, 4)
-    holdout_well: int = 1
+    training_wells: tuple[int, ...] | None = None
+    target_well: int = 1
     save_predictions: bool = True
+
+    @classmethod
+    def from_file(cls, project_root: Path, path: Path) -> "GBFinalConfig":
+        config = load_pipeline_config(path)
+        final_config = config.get("final_training", {})
+        optuna_summary_path = final_config.get(
+            "optuna_summary_path",
+            "output/gb/optuna/catboost_target_well_v1_summary.json",
+        )
+        return cls(
+            project_root=project_root,
+            optuna_summary_path=resolve_project_path(project_root, optuna_summary_path),
+            include_augmented_records=bool(config.get("include_augmented_records", cls.include_augmented_records)),
+            training_wells=optional_wells(config.get("training_wells")),
+            target_well=int(config.get("target_well", cls.target_well)),
+            save_predictions=bool(final_config.get("save_predictions", cls.save_predictions)),
+        )
 
 
 def parse_embedding(value: Any) -> np.ndarray:
@@ -151,15 +185,18 @@ def suggested_params(trial: optuna.Trial) -> dict[str, Any]:
 def tune_catboost(config: GBTuningConfig) -> Path:
     np.random.seed(42)
     df = load_dataset(config.dataset_path)
-    assert_tuning_protocol(df, config.tuning_wells, config.holdout_well)
+    training_wells = resolve_training_wells(
+        df, target_well=config.target_well, configured_wells=config.training_wells
+    )
+    assert_tuning_protocol(df, training_wells, config.target_well)
     iterations = 20 if config.smoke_mode else FIXED_PARAMETERS["iterations"]
     early_stopping = 5 if config.smoke_mode else FIXED_PARAMETERS["early_stopping_rounds"]
     study_name = f"{config.study_name}_smoke" if config.smoke_mode else config.study_name
     dataset_hash = file_sha256(config.dataset_path)
     protocol = {
-        "tuning_wells": list(config.tuning_wells), "holdout_well": config.holdout_well,
+        "training_wells": list(training_wells), "target_well": config.target_well,
         "include_augmented_records": config.include_augmented_records,
-        "validation_originals_only": True, "pca_fit_inside_fold": True,
+        "validation_strategy": "target_well", "validation_originals_only": True, "pca_fit_inside_fold": True,
         "max_iterations": iterations, "early_stopping_rounds": early_stopping,
     }
     signature = config_signature({
@@ -175,34 +212,27 @@ def tune_catboost(config: GBTuningConfig) -> Path:
 
     def objective(trial: optuna.Trial) -> float:
         params = suggested_params(trial)
-        fold_scores: list[float] = []
-        fold_target_scores: list[list[float]] = []
-        fold_best_iterations: list[int] = []
-        for fold_index, validation_well in enumerate(config.tuning_wells):
-            train_df = training_records(
-                df,
-                tuple(sorted(set(config.tuning_wells) - {validation_well})),
-                config.include_augmented_records,
-            )
-            validation_df = originals_for_well(df, validation_well)
-            if config.holdout_well in train_df["well_id"].unique():
-                raise AssertionError("Holdout leakage detected.")
-            x_train, x_validation, _ = fit_fold_features(train_df, validation_df, params["pca_components"])
-            y_train = train_df[list(TARGET_COLUMNS)].reset_index(drop=True)
-            y_validation = validation_df[list(TARGET_COLUMNS)].to_numpy(dtype=float)
-            model = CatBoostRegressor(**model_parameters(params, iterations=iterations))
-            model.fit(x_train, y_train, eval_set=(x_validation, y_validation), early_stopping_rounds=early_stopping)
-            score, target_scores = macro_mae(y_validation, normalized_predictions(model, x_validation))
-            fold_scores.append(score)
-            fold_target_scores.append(target_scores)
-            fold_best_iterations.append(max(1, model.get_best_iteration() + 1))
-            trial.report(float(np.mean(fold_scores)), fold_index)
-            if trial.should_prune():
-                raise optuna.TrialPruned(f"Pruned after fold {fold_index + 1}")
-        trial.set_user_attr("fold_scores", fold_scores)
-        trial.set_user_attr("fold_target_scores", fold_target_scores)
-        trial.set_user_attr("fold_best_iterations", fold_best_iterations)
-        return float(np.mean(fold_scores))
+        train_df = training_records(df, training_wells, config.include_augmented_records)
+        validation_df = originals_for_well(df, config.target_well)
+        if config.target_well in train_df["well_id"].unique():
+            raise AssertionError("Target leakage detected.")
+        x_train, x_validation, _ = fit_fold_features(train_df, validation_df, params["pca_components"])
+        y_train = train_df[list(TARGET_COLUMNS)].reset_index(drop=True)
+        y_validation = validation_df[list(TARGET_COLUMNS)].to_numpy(dtype=float)
+        model = CatBoostRegressor(**model_parameters(params, iterations=iterations))
+        model.fit(x_train, y_train, eval_set=(x_validation, y_validation), early_stopping_rounds=early_stopping)
+        score, target_scores = macro_mae(y_validation, normalized_predictions(model, x_validation))
+        best_iteration = max(1, model.get_best_iteration() + 1)
+        trial.report(score, 0)
+        if trial.should_prune():
+            raise optuna.TrialPruned("Pruned after target-well validation")
+        trial.set_user_attr("validation_well", config.target_well)
+        trial.set_user_attr("validation_score", score)
+        trial.set_user_attr("validation_target_scores", target_scores)
+        trial.set_user_attr("fold_scores", [score])
+        trial.set_user_attr("fold_target_scores", [target_scores])
+        trial.set_user_attr("fold_best_iterations", [best_iteration])
+        return score
 
     if remaining:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
@@ -227,22 +257,27 @@ def detailed_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, dict[s
 def train_final_catboost(config: GBFinalConfig) -> tuple[Path, dict[str, Any]]:
     dataset_path = config.project_root / "data/meta/processed/gb/metadata_dinov3_embeddings.parquet"
     summary = load_summary(config.optuna_summary_path, model_type="catboost", dataset_path=dataset_path)
+    df = load_dataset(dataset_path)
+    training_wells = resolve_training_wells(
+        df, target_well=config.target_well, configured_wells=config.training_wells
+    )
     protocol = summary.get("protocol", {})
-    if protocol.get("tuning_wells") != list(config.training_wells) or protocol.get("holdout_well") != config.holdout_well:
+    summary_training_wells = protocol.get("training_wells", protocol.get("tuning_wells"))
+    summary_target_well = protocol.get("target_well", protocol.get("holdout_well"))
+    if summary_training_wells != list(training_wells) or summary_target_well != config.target_well:
         raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
     if protocol.get("include_augmented_records", True) != config.include_augmented_records:
         raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if not protocol.get("pca_fit_inside_fold"):
         raise ValueError("The Optuna summary does not guarantee fold-local PCA fitting.")
-    df = load_dataset(dataset_path)
-    assert_tuning_protocol(df, config.training_wells, config.holdout_well)
+    assert_tuning_protocol(df, training_wells, config.target_well)
     params = summary["best_trial"]["params"]
     best_iterations = summary["best_trial"]["user_attrs"].get("fold_best_iterations")
     if not best_iterations or any(iteration < 1 for iteration in best_iterations):
         raise ValueError("The winning trial does not contain valid fold best iterations.")
     final_iterations = max(1, int(np.median(best_iterations)))
-    train_df = training_records(df, config.training_wells, config.include_augmented_records)
-    holdout_df = originals_for_well(df, config.holdout_well)
+    train_df = training_records(df, training_wells, config.include_augmented_records)
+    holdout_df = originals_for_well(df, config.target_well)
     x_train, x_holdout, pca = fit_fold_features(train_df, holdout_df, params["pca_components"])
     y_train = train_df[list(TARGET_COLUMNS)].reset_index(drop=True)
     y_holdout = holdout_df[list(TARGET_COLUMNS)].to_numpy(dtype=float)
@@ -266,7 +301,7 @@ def train_final_catboost(config: GBFinalConfig) -> tuple[Path, dict[str, Any]]:
         "pca_file": pca_path.name, "feature_columns": x_train.columns.tolist(),
         "training_started_at": started_at, "training_completed_at": dt.datetime.now().isoformat(timespec="seconds"),
         "hyperparameters": params, "final_iterations": final_iterations,
-        "training_wells": list(config.training_wells), "holdout_well": config.holdout_well,
+        "training_wells": list(training_wells), "target_well": config.target_well,
         "final_training_metrics": {"macro_mae": macro_score, "target_mae": dict(zip(TARGET_COLUMNS, target_mae)),
                                    "per_target": detailed_metrics(y_holdout, predictions)},
         "optuna": {"study_name": summary["study_name"], "trial_number": summary["best_trial"]["number"],
