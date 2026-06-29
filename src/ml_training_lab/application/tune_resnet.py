@@ -11,6 +11,8 @@ from ml_training_lab.domain.record_selection import originals_for_well, training
 from ml_training_lab.domain.search_params import suggest_params
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
+from ml_training_lab.domain.tuning_study_name import effective_study_name
+from ml_training_lab.infrastructure.last_tune_marker import write_last_tune_id
 from ml_training_lab.infrastructure.optuna_study_exporter import export_study
 from ml_training_lab.infrastructure.optuna_study_repository import prepare_study
 from ml_training_lab.infrastructure.output_path_builder import model_tuning_root
@@ -19,12 +21,15 @@ from ml_training_lab.infrastructure.resnet_callbacks import BestMetric, TrialPru
 from ml_training_lab.infrastructure.resnet_loader import loader
 from ml_training_lab.infrastructure.resnet_module import SludgeResNet
 from ml_training_lab.infrastructure.torch_cleanup import cleanup_model
+from ml_training_lab.infrastructure.tuning_artifact_writer import write_tuning_metadata
+from ml_training_lab.infrastructure.tuning_run_directory import create_tuning_run_dir
 from ml_training_lab.presentation.model_configs import ResNetPipelineConfig
 from ml_training_lab.presentation.requests import ResNetRequest
 from ml_training_lab.presentation.responses import OptunaSummaryDto
 from ml_training_lab.shared.device_selector import accelerator
 from ml_training_lab.shared.file_hash import file_sha256
 from ml_training_lab.shared.seed import seed_everything
+from ml_training_lab.shared.uuid_generator import new_uuid
 
 
 def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
@@ -37,11 +42,7 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
     assert_tuning_protocol(df, training_wells, config.target_well)
     max_epochs = 1 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["max_epochs"])
     input_size = int(config.fixed_hyper_params["input_size"])
-    study_name = (
-        f"{config.tuning_params.study_name}_smoke"
-        if config.tuning_params.smoke_mode
-        else config.tuning_params.study_name
-    )
+    study_name = effective_study_name(config.tuning_params)
     dataset_hash = file_sha256(request.dataset_path)
     protocol = {
         "training_wells": list(training_wells),
@@ -62,7 +63,9 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
         "initial_hyper_params": config.initial_hyper_params,
     })
     tuning_root = model_tuning_root(request.project_root, config.output, config.output.output_resnet_sub_folder)
-    database_path = tuning_root / f"{study_name}.db"
+    tune_id = new_uuid()
+    tune_dir = create_tuning_run_dir(tuning_root, tune_id)
+    database_path = tune_dir / f"{study_name}.db"
     study, remaining = prepare_study(
         study_name=study_name,
         database_path=database_path,
@@ -137,7 +140,7 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     summary_path, trials_path = export_study(
         study=study,
-        output_dir=tuning_root,
+        output_dir=tune_dir,
         model_type="resnet",
         dataset_path=request.dataset_path,
         dataset_hash=dataset_hash,
@@ -148,4 +151,12 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
         initial_hyper_params=config.initial_hyper_params,
         config_snapshot={"request": request, "config": config},
     )
-    return OptunaSummaryDto(summary_path=summary_path, trials_path=trials_path, study_database_path=database_path)
+    write_tuning_metadata(tune_dir, {"request": request, "config": config}, request.project_root)
+    write_last_tune_id(tuning_root, tune_id)
+    return OptunaSummaryDto(
+        tune_id=tune_id,
+        tune_dir=tune_dir,
+        summary_path=summary_path,
+        trials_path=trials_path,
+        study_database_path=database_path,
+    )

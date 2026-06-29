@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -12,6 +10,7 @@ from ml_training_lab.domain.prediction_normalization import normalize_prediction
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
+from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
 from ml_training_lab.infrastructure.catboost_parameters import model_parameters
 from ml_training_lab.infrastructure.embedding_joiner import load_feature_dataset
@@ -19,6 +18,7 @@ from ml_training_lab.infrastructure.optuna_summary_reader import load_summary
 from ml_training_lab.infrastructure.output_path_builder import model_runs_root, model_tuning_root
 from ml_training_lab.infrastructure.pipeline_config_reader import read_pipeline_config
 from ml_training_lab.infrastructure.run_artifact_writer import create_run_dir, write_run_metadata
+from ml_training_lab.infrastructure.tuning_summary_path import latest_tuning_summary_path
 from ml_training_lab.presentation.model_configs import CatBoostPipelineConfig
 from ml_training_lab.presentation.requests import CatBoostRequest
 from ml_training_lab.presentation.responses import TrainingResultDto
@@ -140,8 +140,5 @@ def _assert_summary_protocol(
 
 
 def _summary_path(project_root, config: CatBoostPipelineConfig):
-    summary_file_name = Path(config.final_training.optuna_summary_path).name
-    return (
-        model_tuning_root(project_root, config.output, config.output.output_gb_sub_folder)
-        / summary_file_name
-    )
+    tuning_root = model_tuning_root(project_root, config.output, config.output.output_gb_sub_folder)
+    return latest_tuning_summary_path(tuning_root, effective_study_name(config.tuning_params))

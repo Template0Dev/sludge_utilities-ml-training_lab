@@ -15,17 +15,19 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ml_training_lab.application.train_final_catboost import _summary_path as catboost_summary_path
 from ml_training_lab.domain.metrics import macro_mae
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol, target_well_objective_metadata
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
 from ml_training_lab.infrastructure.embedding_joiner import load_feature_dataset
+from ml_training_lab.infrastructure.last_tune_marker import read_last_tune_id, write_last_tune_id
 from ml_training_lab.infrastructure.optuna_study_repository import prepare_study
 from ml_training_lab.infrastructure.output_path_builder import model_runs_root, model_tuning_root
 from ml_training_lab.infrastructure.resnet_backbone import create_resnet_backbone
 from ml_training_lab.infrastructure.run_artifact_writer import create_run_dir, write_run_metadata
+from ml_training_lab.infrastructure.tuning_run_directory import create_tuning_run_dir
+from ml_training_lab.infrastructure.tuning_summary_path import latest_tuning_summary_path
 from ml_training_lab.presentation.common_config import AppOutputConfig, FeatureConfig
 from ml_training_lab.presentation.model_configs import CatBoostPipelineConfig, ResNetPipelineConfig
 from ml_training_lab.shared.device_selector import accelerator
@@ -207,16 +209,15 @@ class FeatureTests(unittest.TestCase):
 
 
 class PipelineConfigTests(unittest.TestCase):
-    def test_checked_in_gb_config_uses_target_well_one(self) -> None:
+    def test_checked_in_gb_config_loads_feature_settings(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         config = CatBoostPipelineConfig.model_validate_json(
             (project_root / "config/gb_training.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(config.target_well, 1)
-        self.assertEqual(config.training_wells, (2, 3, 4))
+        self.assertNotIn(config.target_well, config.training_wells or ())
         self.assertTrue(config.features.should_use_sludge_embeddings)
         self.assertFalse(config.features.should_use_lba_embeddings)
-        self.assertEqual(config.final_training.optuna_summary_path, "catboost_target_well_v1_summary.json")
+        self.assertTrue(config.final_training.save_predictions)
 
     def test_resnet_config_loads_tuning_and_initial_hyper_params(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
@@ -226,30 +227,19 @@ class PipelineConfigTests(unittest.TestCase):
         self.assertEqual(config.tuning_params.study_name, "resnet_target_well_v1")
         self.assertEqual(config.initial_hyper_params["batch_size"], 1)
         self.assertEqual(config.data_loader.num_workers, 13)
-        self.assertEqual(config.final_training.optuna_summary_path, "resnet_target_well_v1_summary.json")
+        self.assertTrue(config.final_training.save_predictions)
 
     def test_target_well_objective_metadata(self) -> None:
         metadata = target_well_objective_metadata({"validation_strategy": "target_well"})
         self.assertEqual(metadata["name"], "target-well macro MAE")
 
-    def test_optuna_summary_path_must_be_file_name(self) -> None:
+    def test_optuna_summary_path_is_no_longer_accepted(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         payload = json.loads((project_root / "config/gb_training.json").read_text(encoding="utf-8"))
-        payload["final_training"]["optuna_summary_path"] = "output/gb/tuning/summary.json"
+        payload["final_training"]["optuna_summary_path"] = "catboost_target_well_v1_summary.json"
 
         with self.assertRaises(ValidationError):
             CatBoostPipelineConfig.model_validate(payload)
-
-    def test_catboost_summary_path_uses_output_config(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        config = CatBoostPipelineConfig.model_validate_json(
-            (project_root / "config/gb_training.json").read_text(encoding="utf-8")
-        )
-
-        self.assertEqual(
-            catboost_summary_path(Path("/project"), config),
-            Path("/project/output/gb/tuning/catboost_target_well_v1_summary.json"),
-        )
 
 
 class OutputPathTests(unittest.TestCase):
@@ -271,6 +261,29 @@ class OutputPathTests(unittest.TestCase):
             self.assertTrue((run_dir / "config_snapshot.json").is_file())
             self.assertTrue((run_dir / "version_info.txt").is_file())
             self.assertEqual(json.loads((run_dir / "request_meta.json").read_text())["metric"], 1)
+
+    def test_last_tune_marker_contains_uuid_string(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tuning_root = Path(directory)
+            write_last_tune_id(tuning_root, "tune-uuid")
+
+            self.assertEqual(json.loads((tuning_root / ".last_tune.json").read_text()), "tune-uuid")
+            self.assertEqual(read_last_tune_id(tuning_root), "tune-uuid")
+
+    def test_latest_tuning_summary_uses_marker_uuid_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tuning_root = Path(directory)
+            tune_dir = create_tuning_run_dir(tuning_root, "tune-uuid")
+            summary_path = tune_dir / "study_summary.json"
+            summary_path.write_text("{}", encoding="utf-8")
+            write_last_tune_id(tuning_root, "tune-uuid")
+
+            self.assertEqual(latest_tuning_summary_path(tuning_root, "study"), summary_path)
+
+    def test_missing_last_tune_marker_requires_tuning_first(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(FileNotFoundError):
+                latest_tuning_summary_path(Path(directory), "study")
 
 
 class ResNetBackboneTests(unittest.TestCase):

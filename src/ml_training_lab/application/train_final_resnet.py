@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
@@ -10,12 +8,14 @@ import torch
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
+from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.optuna_summary_reader import load_summary
 from ml_training_lab.infrastructure.output_path_builder import model_runs_root, model_tuning_root
 from ml_training_lab.infrastructure.pipeline_config_reader import read_pipeline_config
 from ml_training_lab.infrastructure.resnet_loader import loader
 from ml_training_lab.infrastructure.resnet_module import SludgeResNet
 from ml_training_lab.infrastructure.run_artifact_writer import create_run_dir, write_run_metadata
+from ml_training_lab.infrastructure.tuning_summary_path import latest_tuning_summary_path
 from ml_training_lab.presentation.model_configs import ResNetPipelineConfig
 from ml_training_lab.presentation.requests import ResNetRequest
 from ml_training_lab.presentation.responses import TrainingResultDto
@@ -146,8 +146,5 @@ def _assert_summary_protocol(
 
 
 def _summary_path(project_root, config: ResNetPipelineConfig):
-    summary_file_name = Path(config.final_training.optuna_summary_path).name
-    return (
-        model_tuning_root(project_root, config.output, config.output.output_resnet_sub_folder)
-        / summary_file_name
-    )
+    tuning_root = model_tuning_root(project_root, config.output, config.output.output_resnet_sub_folder)
+    return latest_tuning_summary_path(tuning_root, effective_study_name(config.tuning_params))

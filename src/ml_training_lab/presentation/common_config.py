@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -46,16 +45,9 @@ class FeatureConfig(BaseModel):
 
 
 class FinalTrainingConfig(BaseModel):
-    optuna_summary_path: str | Path
-    save_predictions: bool = True
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("optuna_summary_path")
-    @classmethod
-    def require_summary_file_name(cls, value: str | Path) -> str | Path:
-        path = Path(value)
-        if path.is_absolute() or path.parent != Path("."):
-            raise ValueError("optuna_summary_path must be a file name; output folders come from output config.")
-        return value
+    save_predictions: bool = True
 
 
 class TuningParams(BaseModel):

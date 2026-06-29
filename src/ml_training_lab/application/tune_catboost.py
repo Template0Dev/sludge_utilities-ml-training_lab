@@ -13,17 +13,22 @@ from ml_training_lab.domain.record_selection import originals_for_well, training
 from ml_training_lab.domain.search_params import suggest_params
 from ml_training_lab.domain.training_wells import resolve_training_wells
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
+from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
 from ml_training_lab.infrastructure.catboost_parameters import model_parameters
 from ml_training_lab.infrastructure.embedding_joiner import load_feature_dataset
+from ml_training_lab.infrastructure.last_tune_marker import write_last_tune_id
 from ml_training_lab.infrastructure.optuna_study_exporter import export_study
 from ml_training_lab.infrastructure.optuna_study_repository import prepare_study
 from ml_training_lab.infrastructure.output_path_builder import model_tuning_root
 from ml_training_lab.infrastructure.pipeline_config_reader import read_pipeline_config
+from ml_training_lab.infrastructure.tuning_artifact_writer import write_tuning_metadata
+from ml_training_lab.infrastructure.tuning_run_directory import create_tuning_run_dir
 from ml_training_lab.presentation.model_configs import CatBoostPipelineConfig
 from ml_training_lab.presentation.requests import CatBoostRequest
 from ml_training_lab.presentation.responses import OptunaSummaryDto
 from ml_training_lab.shared.file_hash import file_sha256
+from ml_training_lab.shared.uuid_generator import new_uuid
 
 
 def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
@@ -40,11 +45,7 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
     assert_tuning_protocol(df, training_wells, config.target_well)
     iterations = 20 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["iterations"])
     early_stopping = 5 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["early_stopping_rounds"])
-    study_name = (
-        f"{config.tuning_params.study_name}_smoke"
-        if config.tuning_params.smoke_mode
-        else config.tuning_params.study_name
-    )
+    study_name = effective_study_name(config.tuning_params)
     dataset_hash = file_sha256(request.base_dataset_path)
     protocol = {
         "training_wells": list(training_wells),
@@ -66,7 +67,9 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
         "initial_hyper_params": config.initial_hyper_params,
     })
     tuning_root = model_tuning_root(request.project_root, config.output, config.output.output_gb_sub_folder)
-    database_path = tuning_root / f"{study_name}.db"
+    tune_id = new_uuid()
+    tune_dir = create_tuning_run_dir(tuning_root, tune_id)
+    database_path = tune_dir / f"{study_name}.db"
     study, remaining = prepare_study(
         study_name=study_name,
         database_path=database_path,
@@ -106,7 +109,7 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
         study.optimize(objective, n_trials=remaining, n_jobs=1)
     summary_path, trials_path = export_study(
         study=study,
-        output_dir=tuning_root,
+        output_dir=tune_dir,
         model_type="catboost",
         dataset_path=request.base_dataset_path,
         dataset_hash=dataset_hash,
@@ -117,7 +120,15 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
         initial_hyper_params=config.initial_hyper_params,
         config_snapshot=_config_snapshot(request.config_path, config),
     )
-    return OptunaSummaryDto(summary_path=summary_path, trials_path=trials_path, study_database_path=database_path)
+    write_tuning_metadata(tune_dir, _config_snapshot(request.config_path, config), request.project_root)
+    write_last_tune_id(tuning_root, tune_id)
+    return OptunaSummaryDto(
+        tune_id=tune_id,
+        tune_dir=tune_dir,
+        summary_path=summary_path,
+        trials_path=trials_path,
+        study_database_path=database_path,
+    )
 
 
 def _config_snapshot(config_path: Path, config: CatBoostPipelineConfig) -> dict[str, object]:

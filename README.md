@@ -66,9 +66,13 @@ output/
         embeddings.joblib
         predictions.csv
     tuning/
-      {study_name}.db
-      {study_name}_summary.json
-      {study_name}_trials.csv
+      .last_tune.json
+      {tune_uuid}/
+        {study_name}.db
+        {study_name}_summary.json
+        {study_name}_trials.csv
+        config_snapshot.json
+        version_info.txt
   resnet/
     runs/
       {uuid}/
@@ -78,9 +82,14 @@ output/
         model.ckpt
         predictions.csv
     tuning/
-      {study_name}.db
-      {study_name}_summary.json
-      {study_name}_trials.csv
+      .last_tune.json
+      {tune_uuid}/
+        {study_name}.db
+        {study_name}_summary.json
+        {study_name}_trials.csv
+        config_snapshot.json
+        version_info.txt
 ```
 
 Optuna tuning files are persistent and intentionally outside final-training run folders.
+Final training reads the latest tuning UUID from `.last_tune.json`.

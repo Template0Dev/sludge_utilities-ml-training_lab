@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict
 class OptunaSummaryDto(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    tune_id: str
+    tune_dir: Path
     summary_path: Path
     trials_path: Path
     study_database_path: Path
