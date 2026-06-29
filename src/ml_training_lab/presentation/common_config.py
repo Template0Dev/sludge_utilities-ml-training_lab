@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AppOutputConfig(BaseModel):
@@ -29,12 +29,20 @@ class FeatureConfig(BaseModel):
         "is_augmented",
     )
 
-    @field_validator("base_columns", "embedding_join_keys")
+    @field_validator("embedding_join_keys")
     @classmethod
     def require_non_empty_columns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value:
             raise ValueError("column list cannot be empty")
         return value
+
+    @model_validator(mode="after")
+    def require_at_least_one_feature_source(self) -> "FeatureConfig":
+        has_base_columns = bool(self.base_columns)
+        has_embeddings = self.should_use_sludge_embeddings or self.should_use_lba_embeddings
+        if not has_base_columns and not has_embeddings:
+            raise ValueError("At least one feature source is required: base_columns, sludge embeddings, or LBA embeddings.")
+        return self
 
 
 class FinalTrainingConfig(BaseModel):

@@ -154,6 +154,40 @@ class FeatureTests(unittest.TestCase):
                     ),
                 )
 
+    def test_sludge_embeddings_only_allows_empty_base_columns(self) -> None:
+        features = FeatureConfig(
+            base_columns=(),
+            should_use_sludge_embeddings=True,
+            should_use_lba_embeddings=False,
+            embedding_join_keys=("well_id", "interval_start", "interval_end"),
+        )
+        train = pd.DataFrame({
+            "well_id": [1, 1, 1],
+            "interval_start": [0.0, 1.0, 2.0],
+            "interval_end": [1.0, 2.0, 3.0],
+            "sludge_dinov3_emb": [np.array([0.0, 0.0]), np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        })
+        validation = pd.DataFrame({
+            "well_id": [2],
+            "interval_start": [3.0],
+            "interval_end": [4.0],
+            "sludge_dinov3_emb": [np.array([1.0, 1.0])],
+        })
+
+        x_train, x_validation, _ = fit_fold_features(train, validation, features=features, components=1)
+
+        self.assertEqual(x_train.columns.tolist(), ["sludge_emb_pca_0"])
+        self.assertEqual(x_validation.columns.tolist(), ["sludge_emb_pca_0"])
+
+    def test_feature_config_rejects_no_feature_sources(self) -> None:
+        with self.assertRaises(ValidationError):
+            FeatureConfig(
+                base_columns=(),
+                should_use_sludge_embeddings=False,
+                should_use_lba_embeddings=False,
+                embedding_join_keys=("well_id",),
+            )
+
     def _write_feature_frames(self, directory: Path, duplicate_embeddings: bool = False) -> tuple[Path, Path]:
         base = pd.DataFrame({
             "well_id": [1, 2],
