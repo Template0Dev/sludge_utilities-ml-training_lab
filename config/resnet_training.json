@@ -1,78 +1,125 @@
 {
-  "target_well": 2,
-  "training_wells": [3, 4, 5, 6, 7, 8],
-  "include_augmented_records": true,
-  "target_columns": [
-    "sandstone_sludge",
-    "siltstone_sludge",
-    "argillite_sludge",
-    "radiolarite_sludge",
-    "coal_sludge",
-    "limestone_sludge",
-    "clay_sludge",
-    "other_sludge"
-  ],
-  "output": {
-    "output_base_folder": "output",
-    "output_gb_sub_folder": "gb",
-    "output_resnet_sub_folder": "resnet",
-    "output_runs_prefix_for_saving": "runs",
-    "output_tuning_prefix_for_saving": "tuning"
-  },
-  "features": {
-    "base_columns": ["interval_start", "interval_end"],
-    "should_use_sludge_embeddings": false,
-    "should_use_lba_embeddings": false,
-    "sludge_embedding_column": "sludge_dinov3_emb",
-    "lba_embedding_column": "lba_dinov3_emb",
-    "embedding_join_keys": [
-      "well_id",
-      "interval_start",
-      "interval_end",
-      "sludge_image_path",
-      "lba_image_path",
-      "is_augmented"
-    ]
-  },
-  "data_loader": {
-    "num_workers": 13
-  },
-  "tuning_params": {
-    "study_name": "resnet_target_well_v1",
-    "total_trials": 20,
-    "smoke_mode": false,
-    "pruner_n_startup_trials": 5,
-    "pruner_n_warmup_steps": 3
-  },
-  "search_params": {
-    "learning_rate": {"type": "float", "low": 0.00001, "high": 0.001, "log": true},
-    "weight_decay": {"type": "float", "low": 0.000001, "high": 0.01, "log": true},
-    "batch_size": {"type": "categorical", "choices": [1, 2, 4]},
-    "head_hidden_size": {"type": "categorical", "choices": [256, 512, 1024]},
-    "dropout": {"type": "float", "low": 0.1, "high": 0.5, "step": 0.1},
-    "huber_delta": {"type": "categorical", "choices": [0.5, 1.0, 2.0, 5.0]}
-  },
-  "initial_hyper_params": {
-    "learning_rate": 0.0003,
-    "weight_decay": 0.0001,
-    "batch_size": 1,
-    "head_hidden_size": 512,
-    "dropout": 0.3,
-    "huber_delta": 1.0
-  },
-  "fixed_hyper_params": {
-    "model_name": "resnet50d",
-    "pretrained": true,
-    "optimizer": "AdamW",
-    "input_size": 512,
-    "max_epochs": 15,
-    "early_stop_patience": 6,
-    "lr_factor": 0.5,
-    "lr_patience": 3,
-    "random_seed": 42
-  },
-  "final_training": {
-    "optuna_summary_path": "resnet_target_well_v1_summary.json",
-    "save_predictions": true
-  }
+    "target_well": 2,
+    "training_wells": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+    ],
+    "include_augmented_records": true,
+    "target_columns": [
+        "sandstone_sludge",
+        "siltstone_sludge",
+        "argillite_sludge",
+        "radiolarite_sludge",
+        "coal_sludge",
+        "limestone_sludge",
+        "clay_sludge",
+        "other_sludge"
+    ],
+    "output": {
+        "output_base_folder": "output",
+        "output_gb_sub_folder": "gb",
+        "output_resnet_sub_folder": "resnet",
+        "output_runs_prefix_for_saving": "runs",
+        "output_tuning_prefix_for_saving": "tuning"
+    },
+    "features": {
+        "base_columns": [
+            "interval_start",
+            "interval_end"
+        ],
+        "should_use_sludge_embeddings": false,
+        "should_use_lba_embeddings": false,
+        "sludge_embedding_column": "sludge_dinov3_emb",
+        "lba_embedding_column": "lba_dinov3_emb",
+        "embedding_join_keys": [
+            "well_id",
+            "interval_start",
+            "interval_end",
+            "sludge_image_path",
+            "lba_image_path",
+            "is_augmented"
+        ]
+    },
+    "data_loader": {
+        "num_workers": 13
+    },
+    "tuning_params": {
+        "study_name": "resnet_target_well_v1",
+        "total_trials": 20,
+        "smoke_mode": false,
+        "pruner_n_startup_trials": 5,
+        "pruner_n_warmup_steps": 3
+    },
+    "search_params": {
+        "learning_rate": {
+            "type": "float",
+            "low": 0.00001,
+            "high": 0.001,
+            "log": true
+        },
+        "weight_decay": {
+            "type": "float",
+            "low": 0.000001,
+            "high": 0.01,
+            "log": true
+        },
+        "batch_size": {
+            "type": "categorical",
+            "choices": [
+                1,
+                2,
+                4
+            ]
+        },
+        "head_hidden_size": {
+            "type": "categorical",
+            "choices": [
+                256,
+                512,
+                1024
+            ]
+        },
+        "dropout": {
+            "type": "float",
+            "low": 0.1,
+            "high": 0.5,
+            "step": 0.1
+        },
+        "huber_delta": {
+            "type": "categorical",
+            "choices": [
+                0.5,
+                1.0,
+                2.0,
+                5.0
+            ]
+        }
+    },
+    "initial_hyper_params": {
+        "learning_rate": 0.0003,
+        "weight_decay": 0.0001,
+        "batch_size": 1,
+        "head_hidden_size": 512,
+        "dropout": 0.3,
+        "huber_delta": 1.0
+    },
+    "fixed_hyper_params": {
+        "model_name": "resnet50d",
+        "pretrained": true,
+        "optimizer": "AdamW",
+        "input_size": 512,
+        "max_epochs": 15,
+        "early_stop_patience": 6,
+        "lr_factor": 0.5,
+        "lr_patience": 3,
+        "random_seed": 42
+    },
+    "final_training": {
+        "optuna_summary_path": "resnet_target_well_v1_summary.json",
+        "save_predictions": true
+    }
 }
