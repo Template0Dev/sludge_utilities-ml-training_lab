@@ -79,7 +79,7 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
     )
 
     def objective(trial: optuna.Trial) -> float:
-        params = suggest_params(trial, config.search_params)
+        params = {**config.fixed_hyper_params, **suggest_params(trial, config.search_params)}
         train_df = training_records(df, training_wells, config.include_augmented_records)
         validation_df = originals_for_well(df, config.target_well)
         if config.target_well in train_df["well_id"].unique():
@@ -90,6 +90,7 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
             max_epochs=max_epochs,
             accelerator=accelerator(),
             devices=1,
+            accumulate_grad_batches=int(params.get("accumulate_grad_batches", 1)),
             logger=False,
             enable_checkpointing=False,
             deterministic=False,

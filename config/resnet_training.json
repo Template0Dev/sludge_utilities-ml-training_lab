@@ -1,8 +1,9 @@
 {
-    "target_well": 2,
+    "target_well": 4,
     "training_wells": [
+        1,
+        2,
         3,
-        4,
         5,
         6,
         7,
@@ -49,7 +50,7 @@
     },
     "tuning_params": {
         "study_name": "resnet_target_well_v1",
-        "total_trials": 20,
+        "total_trials": 5,
         "smoke_mode": false,
         "pruner_n_startup_trials": 5,
         "pruner_n_warmup_steps": 3
@@ -66,14 +67,6 @@
             "low": 0.000001,
             "high": 0.01,
             "log": true
-        },
-        "batch_size": {
-            "type": "categorical",
-            "choices": [
-                1,
-                2,
-                4
-            ]
         },
         "head_hidden_size": {
             "type": "categorical",
@@ -102,7 +95,6 @@
     "initial_hyper_params": {
         "learning_rate": 0.0003,
         "weight_decay": 0.0001,
-        "batch_size": 1,
         "head_hidden_size": 512,
         "dropout": 0.3,
         "huber_delta": 1.0
@@ -112,13 +104,15 @@
         "pretrained": true,
         "optimizer": "AdamW",
         "input_size": 512,
+        "batch_size": 16,
+        "accumulate_grad_batches": 4,
         "max_epochs": 15,
         "early_stop_patience": 6,
         "lr_factor": 0.5,
         "lr_patience": 3,
         "random_seed": 42
-  },
-  "final_training": {
-    "save_predictions": true
-  }
-}
+    },
+    "final_training": {
+        "save_predictions": true
+    }
+    }

@@ -226,7 +226,10 @@ class PipelineConfigTests(unittest.TestCase):
             (project_root / "config/resnet_training.json").read_text(encoding="utf-8")
         )
         self.assertEqual(config.tuning_params.study_name, "resnet_target_well_v1")
-        self.assertEqual(config.initial_hyper_params["batch_size"], 1)
+        self.assertNotIn("batch_size", config.search_params)
+        self.assertNotIn("batch_size", config.initial_hyper_params)
+        self.assertEqual(config.fixed_hyper_params["batch_size"], 16)
+        self.assertEqual(config.fixed_hyper_params["accumulate_grad_batches"], 4)
         self.assertEqual(config.data_loader.num_workers, 13)
         self.assertTrue(config.final_training.save_predictions)
 

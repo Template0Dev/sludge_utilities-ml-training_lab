@@ -36,7 +36,11 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
     )
     _assert_summary_protocol(summary, training_wells, config)
     assert_tuning_protocol(df, training_wells, config.target_well)
-    params = summary["best_trial"]["params"]
+    params = {
+        **summary["best_trial"]["params"],
+        **summary.get("fixed_hyper_params", {}),
+        **config.fixed_hyper_params,
+    }
     best_epochs = summary["best_trial"]["user_attrs"].get("fold_best_epochs")
     if not best_epochs or any(epoch < 1 for epoch in best_epochs):
         raise ValueError("The winning trial does not contain valid fold best epochs.")
@@ -49,6 +53,7 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
         max_epochs=final_epochs,
         accelerator=accelerator(),
         devices=1,
+        accumulate_grad_batches=int(params.get("accumulate_grad_batches", 1)),
         logger=False,
         enable_checkpointing=False,
     )
