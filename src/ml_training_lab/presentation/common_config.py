@@ -62,11 +62,35 @@ class DataLoaderConfig(BaseModel):
     num_workers: int = 13
 
 
+class DatasetParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    training_wells: tuple[int, ...]
+    validation_well: int
+    test_well: int
+
+    @field_validator("training_wells")
+    @classmethod
+    def validate_training_wells(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if not value:
+            raise ValueError("dataset_params.training_wells cannot be empty")
+        if len(set(value)) != len(value):
+            raise ValueError("dataset_params.training_wells cannot contain duplicate wells")
+        return value
+
+    @model_validator(mode="after")
+    def validate_dataset_wells(self) -> "DatasetParams":
+        if self.validation_well in self.training_wells:
+            raise ValueError("dataset_params.validation_well must not participate in training")
+        if self.test_well in self.training_wells:
+            raise ValueError("dataset_params.test_well must not participate in training")
+        return self
+
+
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    target_well: int = 1
-    training_wells: tuple[int, ...] | None = None
+    dataset_params: DatasetParams
     include_augmented_records: bool = True
     target_columns: tuple[str, ...]
     output: AppOutputConfig = Field(default_factory=AppOutputConfig)
@@ -75,13 +99,6 @@ class PipelineConfig(BaseModel):
     initial_hyper_params: dict[str, Any]
     fixed_hyper_params: dict[str, Any]
     final_training: FinalTrainingConfig
-
-    @field_validator("training_wells")
-    @classmethod
-    def validate_training_wells(cls, value: tuple[int, ...] | None) -> tuple[int, ...] | None:
-        if value is not None and not value:
-            raise ValueError("training_wells cannot be empty")
-        return value
 
     @field_validator("target_columns")
     @classmethod

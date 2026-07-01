@@ -11,7 +11,7 @@ from ml_training_lab.domain.metrics import macro_mae
 from ml_training_lab.domain.prediction_normalization import normalize_prediction_rows
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
 from ml_training_lab.domain.search_params import suggest_params
-from ml_training_lab.domain.training_wells import resolve_training_wells
+from ml_training_lab.domain.training_wells import resolve_dataset_split
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
 from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
@@ -39,19 +39,22 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
         embedding_dataset_path=request.embedding_dataset_path,
         features=config.features,
     )
-    training_wells = resolve_training_wells(
-        df, target_well=config.target_well, configured_wells=config.training_wells
+    split = resolve_dataset_split(
+        df,
+        training_wells=config.dataset_params.training_wells,
+        validation_well=config.dataset_params.validation_well,
+        test_well=config.dataset_params.test_well,
     )
-    assert_tuning_protocol(df, training_wells, config.target_well)
+    assert_tuning_protocol(df, split.training_wells, split.validation_well)
     iterations = 20 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["iterations"])
     early_stopping = 5 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["early_stopping_rounds"])
     study_name = effective_study_name(config.tuning_params)
     dataset_hash = file_sha256(request.base_dataset_path)
     protocol = {
-        "training_wells": list(training_wells),
-        "target_well": config.target_well,
+        "training_wells": list(split.training_wells),
+        "validation_well": split.validation_well,
         "include_augmented_records": config.include_augmented_records,
-        "validation_strategy": "target_well",
+        "validation_strategy": "validation_well",
         "validation_originals_only": True,
         "pca_fit_inside_fold": True,
         "max_iterations": iterations,
@@ -81,9 +84,9 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
 
     def objective(trial: optuna.Trial) -> float:
         params = suggest_params(trial, config.search_params)
-        train_df = training_records(df, training_wells, config.include_augmented_records)
-        validation_df = originals_for_well(df, config.target_well)
-        if config.target_well in train_df["well_id"].unique():
+        train_df = training_records(df, split.training_wells, config.include_augmented_records)
+        validation_df = originals_for_well(df, split.validation_well)
+        if split.validation_well in train_df["well_id"].unique():
             raise AssertionError("Target leakage detected.")
         x_train, x_validation, _ = fit_fold_features(
             train_df, validation_df, features=config.features, components=params.get("pca_components", 0)
@@ -96,8 +99,8 @@ def tune_catboost(request: CatBoostRequest) -> OptunaSummaryDto:
         best_iteration = max(1, model.get_best_iteration() + 1)
         trial.report(score, 0)
         if trial.should_prune():
-            raise optuna.TrialPruned("Pruned after target-well validation")
-        trial.set_user_attr("validation_well", config.target_well)
+            raise optuna.TrialPruned("Pruned after validation-well validation")
+        trial.set_user_attr("validation_well", split.validation_well)
         trial.set_user_attr("validation_score", score)
         trial.set_user_attr("validation_target_scores", target_scores)
         trial.set_user_attr("fold_scores", [score])

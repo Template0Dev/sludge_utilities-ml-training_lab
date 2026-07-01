@@ -1,14 +1,16 @@
 {
-    "target_well": 4,
-    "training_wells": [
-        1,
-        2,
-        3,
-        5,
-        6,
-        7,
-        8
-    ],
+    "dataset_params": {
+        "training_wells": [
+            1,
+            2,
+            3,
+            6,
+            7,
+            8
+        ],
+        "validation_well": 4,
+        "test_well": 5
+    },
     "include_augmented_records": true,
     "target_columns": [
         "sandstone_sludge",
@@ -40,8 +42,8 @@
         ]
     },
     "tuning_params": {
-        "study_name": "catboost_target_well_v1",
-        "total_trials": 50,
+        "study_name": "catboost_dataset_split_v1",
+        "total_trials": 20,
         "smoke_mode": false,
         "pruner_n_startup_trials": 5,
         "pruner_n_warmup_steps": 0

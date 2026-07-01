@@ -8,7 +8,7 @@ from catboost import CatBoostRegressor
 from ml_training_lab.domain.metrics import detailed_metrics, macro_mae
 from ml_training_lab.domain.prediction_normalization import normalize_prediction_rows
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
-from ml_training_lab.domain.training_wells import resolve_training_wells
+from ml_training_lab.domain.training_wells import DatasetSplit, resolve_dataset_split
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
 from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
@@ -35,32 +35,35 @@ def train_final_catboost(request: CatBoostRequest) -> TrainingResultDto:
         embedding_dataset_path=request.embedding_dataset_path,
         features=config.features,
     )
-    training_wells = resolve_training_wells(
-        df, target_well=config.target_well, configured_wells=config.training_wells
+    split = resolve_dataset_split(
+        df,
+        training_wells=config.dataset_params.training_wells,
+        validation_well=config.dataset_params.validation_well,
+        test_well=config.dataset_params.test_well,
     )
-    _assert_summary_protocol(summary, training_wells, config)
-    assert_tuning_protocol(df, training_wells, config.target_well)
+    _assert_summary_protocol(summary, split, config)
+    assert_tuning_protocol(df, split.training_wells, split.validation_well)
     params = summary["best_trial"]["params"]
     best_iterations = summary["best_trial"]["user_attrs"].get("fold_best_iterations")
     if not best_iterations or any(iteration < 1 for iteration in best_iterations):
         raise ValueError("The winning trial does not contain valid fold best iterations.")
     final_iterations = max(1, int(np.median(best_iterations)))
-    train_df = training_records(df, training_wells, config.include_augmented_records)
-    holdout_df = originals_for_well(df, config.target_well)
-    x_train, x_holdout, transformers = fit_fold_features(
-        train_df, holdout_df, features=config.features, components=params.get("pca_components", 0)
+    train_df = training_records(df, split.training_wells, config.include_augmented_records)
+    test_df = originals_for_well(df, split.test_well)
+    x_train, x_test, transformers = fit_fold_features(
+        train_df, test_df, features=config.features, components=params.get("pca_components", 0)
     )
     y_train = train_df[list(config.target_columns)].reset_index(drop=True)
-    y_holdout = holdout_df[list(config.target_columns)].to_numpy(dtype=float)
+    y_test = test_df[list(config.target_columns)].to_numpy(dtype=float)
     model = CatBoostRegressor(**model_parameters(params, config.fixed_hyper_params, iterations=final_iterations))
     started_at = now_iso()
     model.fit(x_train, y_train)
-    predictions = normalize_prediction_rows(model.predict(x_holdout))
-    macro_score, target_mae = macro_mae(y_holdout, predictions)
+    predictions = normalize_prediction_rows(model.predict(x_test))
+    macro_score, target_mae = macro_mae(y_test, predictions)
     metrics = {
         "macro_mae": macro_score,
         "target_mae": dict(zip(config.target_columns, target_mae, strict=True)),
-        "per_target": detailed_metrics(y_holdout, predictions, config.target_columns),
+        "per_target": detailed_metrics(y_test, predictions, config.target_columns),
     }
     run_id = new_uuid()
     run_dir = create_run_dir(
@@ -75,7 +78,7 @@ def train_final_catboost(request: CatBoostRequest) -> TrainingResultDto:
     predictions_path = None
     if config.final_training.save_predictions:
         predictions_path = run_dir / "predictions.csv"
-        prediction_frame = holdout_df[list(config.target_columns)].reset_index(drop=True).add_suffix("_true")
+        prediction_frame = test_df[list(config.target_columns)].reset_index(drop=True).add_suffix("_true")
         for index, target in enumerate(config.target_columns):
             prediction_frame[f"{target}_pred"] = predictions[:, index]
         prediction_frame.to_csv(predictions_path, index=False)
@@ -92,8 +95,9 @@ def train_final_catboost(request: CatBoostRequest) -> TrainingResultDto:
         "training_completed_at": now_iso(),
         "hyperparameters": params,
         "final_iterations": final_iterations,
-        "training_wells": list(training_wells),
-        "target_well": config.target_well,
+        "training_wells": list(split.training_wells),
+        "validation_well": split.validation_well,
+        "test_well": split.test_well,
         "final_training_metrics": metrics,
         "optuna": {
             "study_name": summary["study_name"],
@@ -123,16 +127,16 @@ def train_final_catboost(request: CatBoostRequest) -> TrainingResultDto:
 
 def _assert_summary_protocol(
     summary: dict[str, object],
-    training_wells: tuple[int, ...],
+    split: DatasetSplit,
     config: CatBoostPipelineConfig,
 ) -> None:
     protocol = summary.get("protocol", {})
     if not isinstance(protocol, dict):
         raise ValueError("The Optuna summary does not contain a valid protocol.")
     summary_training_wells = protocol.get("training_wells", protocol.get("tuning_wells"))
-    summary_target_well = protocol.get("target_well", protocol.get("holdout_well"))
-    if summary_training_wells != list(training_wells) or summary_target_well != config.target_well:
-        raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
+    summary_validation_well = protocol.get("validation_well")
+    if summary_training_wells != list(split.training_wells) or summary_validation_well != split.validation_well:
+        raise ValueError("The Optuna summary uses a different training/validation well protocol.")
     if protocol.get("include_augmented_records", True) != config.include_augmented_records:
         raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if not protocol.get("pca_fit_inside_fold"):

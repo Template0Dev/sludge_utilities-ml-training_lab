@@ -6,7 +6,7 @@ import pytorch_lightning as pl
 import torch
 
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
-from ml_training_lab.domain.training_wells import resolve_training_wells
+from ml_training_lab.domain.training_wells import DatasetSplit, resolve_dataset_split
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
 from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.optuna_summary_reader import load_summary
@@ -31,11 +31,14 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
     summary_path = _summary_path(request.project_root, config)
     summary = load_summary(summary_path, model_type="resnet", dataset_path=request.dataset_path)
     df = pd.read_parquet(request.dataset_path)
-    training_wells = resolve_training_wells(
-        df, target_well=config.target_well, configured_wells=config.training_wells
+    split = resolve_dataset_split(
+        df,
+        training_wells=config.dataset_params.training_wells,
+        validation_well=config.dataset_params.validation_well,
+        test_well=config.dataset_params.test_well,
     )
-    _assert_summary_protocol(summary, training_wells, config)
-    assert_tuning_protocol(df, training_wells, config.target_well)
+    _assert_summary_protocol(summary, split, config)
+    assert_tuning_protocol(df, split.training_wells, split.validation_well)
     params = {
         **summary["best_trial"]["params"],
         **summary.get("fixed_hyper_params", {}),
@@ -45,8 +48,8 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
     if not best_epochs or any(epoch < 1 for epoch in best_epochs):
         raise ValueError("The winning trial does not contain valid fold best epochs.")
     final_epochs = max(1, int(np.median(best_epochs)))
-    train_df = training_records(df, training_wells, config.include_augmented_records)
-    holdout_df = originals_for_well(df, config.target_well)
+    train_df = training_records(df, split.training_wells, config.include_augmented_records)
+    test_df = originals_for_well(df, split.test_well)
     input_size = int(config.fixed_hyper_params["input_size"])
     model = SludgeResNet(params, config.target_columns, scheduler_enabled=False)
     trainer = pl.Trainer(
@@ -70,8 +73,8 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
             shuffle=True,
         ),
     )
-    holdout_loader = loader(
-        holdout_df,
+    test_loader = loader(
+        test_df,
         image_root=request.image_root,
         target_columns=config.target_columns,
         input_size=input_size,
@@ -79,10 +82,10 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
         num_workers=config.data_loader.num_workers,
         shuffle=False,
     )
-    metrics = trainer.validate(model, dataloaders=holdout_loader, verbose=False)[0]
+    metrics = trainer.validate(model, dataloaders=test_loader, verbose=False)[0]
     predictions = None
     if config.final_training.save_predictions:
-        prediction_batches = trainer.predict(model, dataloaders=holdout_loader)
+        prediction_batches = trainer.predict(model, dataloaders=test_loader)
         predictions = torch.cat(prediction_batches).numpy()
     run_id = new_uuid()
     run_dir = create_run_dir(
@@ -94,7 +97,7 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
     predictions_path = None
     if predictions is not None:
         predictions_path = run_dir / "predictions.csv"
-        prediction_frame = holdout_df[list(config.target_columns)].reset_index(drop=True).add_suffix("_true")
+        prediction_frame = test_df[list(config.target_columns)].reset_index(drop=True).add_suffix("_true")
         for index, target in enumerate(config.target_columns):
             prediction_frame[f"{target}_pred"] = predictions[:, index]
         prediction_frame.to_csv(predictions_path, index=False)
@@ -108,8 +111,9 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
         "training_completed_at": now_iso(),
         "hyperparameters": params,
         "final_epochs": final_epochs,
-        "training_wells": list(training_wells),
-        "target_well": config.target_well,
+        "training_wells": list(split.training_wells),
+        "validation_well": split.validation_well,
+        "test_well": split.test_well,
         "final_training_metrics": metrics,
         "optuna": {
             "study_name": summary["study_name"],
@@ -134,16 +138,16 @@ def train_final_resnet(request: ResNetRequest) -> TrainingResultDto:
 
 def _assert_summary_protocol(
     summary: dict[str, object],
-    training_wells: tuple[int, ...],
+    split: DatasetSplit,
     config: ResNetPipelineConfig,
 ) -> None:
     protocol = summary.get("protocol", {})
     if not isinstance(protocol, dict):
         raise ValueError("The Optuna summary does not contain a valid protocol.")
     summary_training_wells = protocol.get("training_wells", protocol.get("tuning_wells"))
-    summary_target_well = protocol.get("target_well", protocol.get("holdout_well"))
-    if summary_training_wells != list(training_wells) or summary_target_well != config.target_well:
-        raise ValueError("The Optuna summary uses a different training/holdout well protocol.")
+    summary_validation_well = protocol.get("validation_well")
+    if summary_training_wells != list(split.training_wells) or summary_validation_well != split.validation_well:
+        raise ValueError("The Optuna summary uses a different training/validation well protocol.")
     if protocol.get("include_augmented_records", True) != config.include_augmented_records:
         raise ValueError("The Optuna summary was produced with a different augmented-record setting.")
     if protocol.get("input_size") != int(config.fixed_hyper_params["input_size"]) or protocol.get("normalization") != "ImageNet":

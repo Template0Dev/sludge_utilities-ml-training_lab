@@ -5,7 +5,7 @@ from typing import Any
 
 import optuna
 
-from ml_training_lab.domain.tuning_protocol import target_well_objective_metadata
+from ml_training_lab.domain.tuning_protocol import validation_well_objective_metadata
 from ml_training_lab.infrastructure.optuna_study_repository import SCHEMA_VERSION
 from ml_training_lab.shared.json_writer import write_json
 
@@ -40,7 +40,7 @@ def export_study(
         "configuration_signature": signature,
         "dataset_path": str(dataset_path),
         "dataset_sha256": dataset_hash,
-        "objective": target_well_objective_metadata(protocol),
+        "objective": validation_well_objective_metadata(protocol),
         "protocol": protocol,
         "search_params": search_params,
         "fixed_hyper_params": fixed_hyper_params,

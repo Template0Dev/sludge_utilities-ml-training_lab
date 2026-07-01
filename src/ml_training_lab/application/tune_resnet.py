@@ -9,7 +9,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from ml_training_lab.domain.config_signature import config_signature
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
 from ml_training_lab.domain.search_params import suggest_params
-from ml_training_lab.domain.training_wells import resolve_training_wells
+from ml_training_lab.domain.training_wells import resolve_dataset_split
 from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol
 from ml_training_lab.domain.tuning_study_name import effective_study_name
 from ml_training_lab.infrastructure.last_tune_marker import write_last_tune_id
@@ -36,19 +36,22 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
     seed_everything()
     config = read_pipeline_config(request.config_path, ResNetPipelineConfig)
     df = pd.read_parquet(request.dataset_path)
-    training_wells = resolve_training_wells(
-        df, target_well=config.target_well, configured_wells=config.training_wells
+    split = resolve_dataset_split(
+        df,
+        training_wells=config.dataset_params.training_wells,
+        validation_well=config.dataset_params.validation_well,
+        test_well=config.dataset_params.test_well,
     )
-    assert_tuning_protocol(df, training_wells, config.target_well)
+    assert_tuning_protocol(df, split.training_wells, split.validation_well)
     max_epochs = 1 if config.tuning_params.smoke_mode else int(config.fixed_hyper_params["max_epochs"])
     input_size = int(config.fixed_hyper_params["input_size"])
     study_name = effective_study_name(config.tuning_params)
     dataset_hash = file_sha256(request.dataset_path)
     protocol = {
-        "training_wells": list(training_wells),
-        "target_well": config.target_well,
+        "training_wells": list(split.training_wells),
+        "validation_well": split.validation_well,
         "include_augmented_records": config.include_augmented_records,
-        "validation_strategy": "target_well",
+        "validation_strategy": "validation_well",
         "validation_originals_only": True,
         "input_size": input_size,
         "normalization": "ImageNet",
@@ -80,9 +83,9 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
 
     def objective(trial: optuna.Trial) -> float:
         params = {**config.fixed_hyper_params, **suggest_params(trial, config.search_params)}
-        train_df = training_records(df, training_wells, config.include_augmented_records)
-        validation_df = originals_for_well(df, config.target_well)
-        if config.target_well in train_df["well_id"].unique():
+        train_df = training_records(df, split.training_wells, config.include_augmented_records)
+        validation_df = originals_for_well(df, split.validation_well)
+        if split.validation_well in train_df["well_id"].unique():
             raise AssertionError("Target leakage detected.")
         metric = BestMetric()
         model = SludgeResNet(params, config.target_columns)
@@ -131,7 +134,7 @@ def tune_resnet(request: ResNetRequest) -> OptunaSummaryDto:
         finally:
             del model, trainer
             cleanup_model()
-        trial.set_user_attr("validation_well", config.target_well)
+        trial.set_user_attr("validation_well", split.validation_well)
         trial.set_user_attr("validation_score", metric.best_value)
         trial.set_user_attr("fold_scores", [metric.best_value])
         trial.set_user_attr("fold_best_epochs", [metric.best_epoch])

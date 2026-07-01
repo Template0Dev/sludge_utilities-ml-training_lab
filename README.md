@@ -37,6 +37,20 @@ initial hyper-params, fixed hyper-params, and output path parts. CatBoost also
 defines feature flags for tabular and embedding inputs; ResNet uses sludge
 images directly from the dataset metadata.
 
+Dataset splits are configured under `dataset_params`:
+
+```json
+"dataset_params": {
+    "training_wells": [1, 2, 3, 5, 6, 7, 8],
+    "validation_well": 4,
+    "test_well": 4
+}
+```
+
+Tuning validates on `validation_well`. Final training fits only on
+`training_wells` and reports metrics/predictions on `test_well`.
+`validation_well` and `test_well` may use the same well.
+
 GB embedding features are independent:
 
 - `should_use_sludge_embeddings`: joins and uses `sludge_dinov3_emb`.

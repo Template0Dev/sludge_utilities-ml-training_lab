@@ -15,10 +15,14 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from ml_training_lab.application.train_final_catboost import (
+    _assert_summary_protocol as assert_catboost_summary_protocol,
+)
+from ml_training_lab.application.train_final_resnet import _assert_summary_protocol as assert_resnet_summary_protocol
 from ml_training_lab.domain.metrics import macro_mae
 from ml_training_lab.domain.record_selection import originals_for_well, training_records
-from ml_training_lab.domain.training_wells import resolve_training_wells
-from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol, target_well_objective_metadata
+from ml_training_lab.domain.training_wells import DatasetSplit, resolve_dataset_split
+from ml_training_lab.domain.tuning_protocol import assert_tuning_protocol, validation_well_objective_metadata
 from ml_training_lab.infrastructure.catboost_feature_matrix import fit_fold_features
 from ml_training_lab.infrastructure.catboost_parameters import model_parameters
 from ml_training_lab.infrastructure.embedding_joiner import load_feature_dataset
@@ -41,7 +45,7 @@ class ProtocolTests(unittest.TestCase):
             "is_augmented": [False, True] * 4,
         })
 
-    def test_holdout_cannot_participate_in_tuning(self) -> None:
+    def test_validation_well_cannot_participate_in_tuning(self) -> None:
         with self.assertRaises(ValueError):
             assert_tuning_protocol(self.frame, (1, 2, 3), 1)
 
@@ -60,9 +64,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(selected), 4)
         self.assertTrue(selected["is_augmented"].any())
 
-    def test_training_wells_default_to_all_except_target(self) -> None:
-        wells = resolve_training_wells(self.frame, target_well=1, configured_wells=None)
-        self.assertEqual(wells, (2, 3, 4))
+    def test_validation_and_test_can_share_well(self) -> None:
+        split = resolve_dataset_split(self.frame, training_wells=(1, 2), validation_well=3, test_well=3)
+        self.assertEqual(split.training_wells, (1, 2))
+        self.assertEqual(split.validation_well, 3)
+        self.assertEqual(split.test_well, 3)
+
+    def test_training_wells_cannot_include_validation_well(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_dataset_split(self.frame, training_wells=(1, 2), validation_well=2, test_well=3)
+
+    def test_training_wells_cannot_include_test_well(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_dataset_split(self.frame, training_wells=(1, 2), validation_well=3, test_well=2)
+
+    def test_split_wells_must_exist_in_dataset(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_dataset_split(self.frame, training_wells=(1, 2), validation_well=3, test_well=9)
 
     def test_macro_mae_averages_targets_equally(self) -> None:
         score, target_scores = macro_mae(np.array([[0.0, 0.0]]), np.array([[2.0, 4.0]]))
@@ -215,7 +233,11 @@ class PipelineConfigTests(unittest.TestCase):
         config = CatBoostPipelineConfig.model_validate_json(
             (project_root / "config/gb_training.json").read_text(encoding="utf-8")
         )
-        self.assertNotIn(config.target_well, config.training_wells or ())
+        self.assertEqual(config.dataset_params.training_wells, (1, 2, 3, 5, 6, 7, 8))
+        self.assertEqual(config.dataset_params.validation_well, 4)
+        self.assertEqual(config.dataset_params.test_well, 4)
+        self.assertFalse(hasattr(config, "target_well"))
+        self.assertEqual(config.tuning_params.study_name, "catboost_dataset_split_v1")
         self.assertTrue(config.features.should_use_sludge_embeddings)
         self.assertFalse(config.features.should_use_lba_embeddings)
         self.assertTrue(config.final_training.save_predictions)
@@ -226,7 +248,10 @@ class PipelineConfigTests(unittest.TestCase):
             (project_root / "config/resnet_training.json").read_text(encoding="utf-8")
         )
         self.assertFalse(hasattr(config, "features"))
-        self.assertEqual(config.tuning_params.study_name, "resnet_target_well_v1")
+        self.assertEqual(config.dataset_params.training_wells, (1, 2, 3, 5, 6, 7, 8))
+        self.assertEqual(config.dataset_params.validation_well, 4)
+        self.assertEqual(config.dataset_params.test_well, 4)
+        self.assertEqual(config.tuning_params.study_name, "resnet_dataset_split_v1")
         self.assertNotIn("batch_size", config.search_params)
         self.assertNotIn("batch_size", config.initial_hyper_params)
         self.assertEqual(config.fixed_hyper_params["batch_size"], 16)
@@ -242,14 +267,80 @@ class PipelineConfigTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ResNetPipelineConfig.model_validate(payload)
 
-    def test_target_well_objective_metadata(self) -> None:
-        metadata = target_well_objective_metadata({"validation_strategy": "target_well"})
-        self.assertEqual(metadata["name"], "target-well macro MAE")
+    def test_validation_well_objective_metadata(self) -> None:
+        metadata = validation_well_objective_metadata({"validation_strategy": "validation_well"})
+        self.assertEqual(metadata["name"], "validation-well macro MAE")
+
+    def test_old_top_level_split_keys_are_rejected(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        payload = json.loads((project_root / "config/gb_training.json").read_text(encoding="utf-8"))
+        payload["target_well"] = 4
+        payload["training_wells"] = [1, 2, 3]
+
+        with self.assertRaises(ValidationError):
+            CatBoostPipelineConfig.model_validate(payload)
+
+    def test_dataset_params_rejects_training_overlap(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        payload = json.loads((project_root / "config/gb_training.json").read_text(encoding="utf-8"))
+        payload["dataset_params"]["training_wells"].append(payload["dataset_params"]["validation_well"])
+
+        with self.assertRaises(ValidationError):
+            CatBoostPipelineConfig.model_validate(payload)
+
+    def test_dataset_params_rejects_duplicate_training_wells(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        payload = json.loads((project_root / "config/gb_training.json").read_text(encoding="utf-8"))
+        payload["dataset_params"]["training_wells"].append(payload["dataset_params"]["training_wells"][0])
+
+        with self.assertRaises(ValidationError):
+            CatBoostPipelineConfig.model_validate(payload)
+
+    def test_final_summary_protocol_uses_validation_well_not_test_well(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        catboost_config = CatBoostPipelineConfig.model_validate_json(
+            (project_root / "config/gb_training.json").read_text(encoding="utf-8")
+        )
+        split = DatasetSplit(
+            training_wells=catboost_config.dataset_params.training_wells,
+            validation_well=catboost_config.dataset_params.validation_well,
+            test_well=catboost_config.dataset_params.test_well,
+        )
+        summary = {
+            "protocol": {
+                "training_wells": list(split.training_wells),
+                "validation_well": split.validation_well,
+                "include_augmented_records": catboost_config.include_augmented_records,
+                "pca_fit_inside_fold": True,
+            }
+        }
+        assert_catboost_summary_protocol(summary, split, catboost_config)
+
+    def test_resnet_summary_protocol_uses_validation_well_not_test_well(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        resnet_config = ResNetPipelineConfig.model_validate_json(
+            (project_root / "config/resnet_training.json").read_text(encoding="utf-8")
+        )
+        split = DatasetSplit(
+            training_wells=resnet_config.dataset_params.training_wells,
+            validation_well=resnet_config.dataset_params.validation_well,
+            test_well=resnet_config.dataset_params.test_well,
+        )
+        summary = {
+            "protocol": {
+                "training_wells": list(split.training_wells),
+                "validation_well": split.validation_well,
+                "include_augmented_records": resnet_config.include_augmented_records,
+                "input_size": int(resnet_config.fixed_hyper_params["input_size"]),
+                "normalization": "ImageNet",
+            }
+        }
+        assert_resnet_summary_protocol(summary, split, resnet_config)
 
     def test_optuna_summary_path_is_no_longer_accepted(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         payload = json.loads((project_root / "config/gb_training.json").read_text(encoding="utf-8"))
-        payload["final_training"]["optuna_summary_path"] = "catboost_target_well_v1_summary.json"
+        payload["final_training"]["optuna_summary_path"] = "catboost_dataset_split_v1_summary.json"
 
         with self.assertRaises(ValidationError):
             CatBoostPipelineConfig.model_validate(payload)
