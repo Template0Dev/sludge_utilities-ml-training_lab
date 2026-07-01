@@ -225,6 +225,7 @@ class PipelineConfigTests(unittest.TestCase):
         config = ResNetPipelineConfig.model_validate_json(
             (project_root / "config/resnet_training.json").read_text(encoding="utf-8")
         )
+        self.assertFalse(hasattr(config, "features"))
         self.assertEqual(config.tuning_params.study_name, "resnet_target_well_v1")
         self.assertNotIn("batch_size", config.search_params)
         self.assertNotIn("batch_size", config.initial_hyper_params)
@@ -232,6 +233,14 @@ class PipelineConfigTests(unittest.TestCase):
         self.assertEqual(config.fixed_hyper_params["accumulate_grad_batches"], 4)
         self.assertEqual(config.data_loader.num_workers, 13)
         self.assertTrue(config.final_training.save_predictions)
+
+    def test_resnet_config_rejects_gb_feature_settings(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        payload = json.loads((project_root / "config/resnet_training.json").read_text(encoding="utf-8"))
+        payload["features"] = {"base_columns": ["interval_start", "interval_end"]}
+
+        with self.assertRaises(ValidationError):
+            ResNetPipelineConfig.model_validate(payload)
 
     def test_target_well_objective_metadata(self) -> None:
         metadata = target_well_objective_metadata({"validation_strategy": "target_well"})

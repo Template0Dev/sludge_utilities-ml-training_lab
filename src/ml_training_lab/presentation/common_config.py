@@ -63,14 +63,13 @@ class DataLoaderConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     target_well: int = 1
     training_wells: tuple[int, ...] | None = None
     include_augmented_records: bool = True
     target_columns: tuple[str, ...]
     output: AppOutputConfig = Field(default_factory=AppOutputConfig)
-    features: FeatureConfig = Field(default_factory=FeatureConfig)
     tuning_params: TuningParams
     search_params: dict[str, dict[str, Any]]
     initial_hyper_params: dict[str, Any]

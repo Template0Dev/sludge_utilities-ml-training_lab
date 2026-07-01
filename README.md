@@ -32,8 +32,10 @@ augmentation, and DINOv3 embedding extraction.
 
 ## Configuration
 
-Training configs define target columns, feature flags, tuning params, search params,
-initial hyper-params, fixed hyper-params, and output path parts.
+Training configs define target columns, tuning params, search params,
+initial hyper-params, fixed hyper-params, and output path parts. CatBoost also
+defines feature flags for tabular and embedding inputs; ResNet uses sludge
+images directly from the dataset metadata.
 
 GB embedding features are independent:
 

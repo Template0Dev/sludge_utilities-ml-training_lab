@@ -27,24 +27,6 @@
         "output_runs_prefix_for_saving": "runs",
         "output_tuning_prefix_for_saving": "tuning"
     },
-    "features": {
-        "base_columns": [
-            "interval_start",
-            "interval_end"
-        ],
-        "should_use_sludge_embeddings": false,
-        "should_use_lba_embeddings": false,
-        "sludge_embedding_column": "sludge_dinov3_emb",
-        "lba_embedding_column": "lba_dinov3_emb",
-        "embedding_join_keys": [
-            "well_id",
-            "interval_start",
-            "interval_end",
-            "sludge_image_path",
-            "lba_image_path",
-            "is_augmented"
-        ]
-    },
     "data_loader": {
         "num_workers": 13
     },
@@ -115,4 +97,4 @@
     "final_training": {
         "save_predictions": true
     }
-    }
+}
