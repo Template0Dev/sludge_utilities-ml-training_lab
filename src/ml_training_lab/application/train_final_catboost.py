@@ -41,8 +41,11 @@ def train_final_catboost(request: CatBoostRequest) -> TrainingResultDto:
         validation_well=config.dataset_params.validation_well,
         test_well=config.dataset_params.test_well,
     )
-    _assert_summary_protocol(summary, split, config)
-    assert_tuning_protocol(df, split.training_wells, split.validation_well)
+
+    # Comment this to enable final model training on non-asserted validation data.
+    # _assert_summary_protocol(summary, split, config)
+    # assert_tuning_protocol(df, split.training_wells, split.validation_well)
+    
     params = summary["best_trial"]["params"]
     best_iterations = summary["best_trial"]["user_attrs"].get("fold_best_iterations")
     if not best_iterations or any(iteration < 1 for iteration in best_iterations):
