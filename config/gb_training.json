@@ -4,12 +4,13 @@
             1,
             2,
             3,
+            5,
             6,
             7,
             8
         ],
         "validation_well": 4,
-        "test_well": 5
+        "test_well": 4
     },
     "include_augmented_records": true,
     "target_columns": [
@@ -26,7 +27,9 @@
     },
     "features": {
         "base_columns": [
-            
+            "well_id",
+            "interval_start",
+            "interval_end"
         ],
         "should_use_sludge_embeddings": true,
         "should_use_lba_embeddings": false,
@@ -108,7 +111,7 @@
         "eval_metric": "MultiRMSE",
         "early_stopping_rounds": 200,
         "random_seed": 42
-  },
+    },
     "final_training": {
         "save_predictions": true
     }
