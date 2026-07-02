@@ -647,63 +647,6 @@ http = [
 ]
 
 [[package]]
-name = "gb-training-lab"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "albumentations" },
-    { name = "catboost" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "ipywidgets" },
-    { name = "lightning" },
-    { name = "numpy" },
-    { name = "opencv-python" },
-    { name = "optuna" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pyarrow" },
-    { name = "pydantic" },
-    { name = "pyprojroot" },
-    { name = "scikit-learn" },
-    { name = "tensorboard" },
-    { name = "timm" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "torchvision" },
-    { name = "transformers" },
-    { name = "uuid6" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = ">=1.13.0" },
-    { name = "albumentations", specifier = ">=2.0.8" },
-    { name = "catboost", specifier = ">=1.2.10" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "huggingface-hub", specifier = ">=1.18.0" },
-    { name = "ipywidgets", specifier = ">=8.1.8" },
-    { name = "lightning", specifier = ">=2.6.5" },
-    { name = "numpy", specifier = ">=2.4.6" },
-    { name = "opencv-python", specifier = ">=4.13.0.92" },
-    { name = "optuna", specifier = ">=4.6.0" },
-    { name = "pandas", specifier = ">=2.3.1" },
-    { name = "pillow", specifier = ">=12.2.0" },
-    { name = "pyarrow", specifier = ">=24.0.0" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pyprojroot", specifier = ">=0.3.0" },
-    { name = "scikit-learn", specifier = ">=1.9.0" },
-    { name = "tensorboard", specifier = ">=2.20.0" },
-    { name = "timm", specifier = ">=1.0.27" },
-    { name = "torch", specifier = ">=2.12.0" },
-    { name = "torchaudio", specifier = ">=2.11.0" },
-    { name = "torchvision", specifier = ">=0.27.0" },
-    { name = "transformers", specifier = ">=5.11.0" },
-    { name = "uuid6", specifier = ">=2025.0.1" },
-]
-
-[[package]]
 name = "graphviz"
 version = "0.21"
 source = { registry = "https://pypi.org/simple" }
@@ -1287,6 +1230,63 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "ml-training-lab"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "albumentations" },
+    { name = "catboost" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "ipywidgets" },
+    { name = "lightning" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "optuna" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "pyprojroot" },
+    { name = "scikit-learn" },
+    { name = "tensorboard" },
+    { name = "timm" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "uuid6" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=1.13.0" },
+    { name = "albumentations", specifier = ">=2.0.8" },
+    { name = "catboost", specifier = ">=1.2.10" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "huggingface-hub", specifier = ">=1.18.0" },
+    { name = "ipywidgets", specifier = ">=8.1.8" },
+    { name = "lightning", specifier = ">=2.6.5" },
+    { name = "numpy", specifier = ">=2.4.6" },
+    { name = "opencv-python", specifier = ">=4.13.0.92" },
+    { name = "optuna", specifier = ">=4.6.0" },
+    { name = "pandas", specifier = ">=2.3.1" },
+    { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pyarrow", specifier = ">=24.0.0" },
+    { name = "pydantic", specifier = ">=2.13.4" },
+    { name = "pyprojroot", specifier = ">=0.3.0" },
+    { name = "scikit-learn", specifier = ">=1.9.0" },
+    { name = "tensorboard", specifier = ">=2.20.0" },
+    { name = "timm", specifier = ">=1.0.27" },
+    { name = "torch", specifier = ">=2.12.0" },
+    { name = "torchaudio", specifier = ">=2.11.0" },
+    { name = "torchvision", specifier = ">=0.27.0" },
+    { name = "transformers", specifier = ">=5.11.0" },
+    { name = "uuid6", specifier = ">=2025.0.1" },
 ]
 
 [[package]]
